@@ -35,7 +35,7 @@ Repo: `j-scriptz/mage-mirror`
   - If `REMOTE_SSH_KEY` is set → uses key-based auth
   - If not, and you’re in a TTY → falls back to password/agent-based SSH (ssh/rsync will prompt)
   - In non-interactive runs, a key is still required
-- 🧾 Single, central config file: **`_master.config`**
+- 🧾 Single, central config file: **`_mage-mirror.config`**
 
 ---
 
