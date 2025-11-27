@@ -1,7 +1,7 @@
 # Magento + Hyvä via Warden  
 **_mage-mirror.sh v1.0**
 
-From zero to a **local Magento 2 + Hyvä** dev stack in one command — with optional **remote clone**, **one-step core upgrade**, and **multi-store** routing.
+**local Magento 2 + Hyvä** dev stack in one command — with optional **remote clone**, **one-step core upgrade**, and **multi-store** routing.
 
 This repo ships a single, powerful installer:
 
@@ -25,8 +25,8 @@ Repo: `j-scriptz/mage-mirror`
   - Optional install via OSS composer mirrors
   - Automatically sets Hyvä Default as the storefront theme when available
 - 🌐 **Optional multi-store**:
-  - `https://app.<project>.test` → base website
-  - `https://<project>.test` → optional `subcats` website
+  - `https://<project>.test` → base website
+  - `https://app.<project>.test` → optional `sub` websites
   - Host-based routing patch in `pub/index.php` (only when enabled)
 - 🧪 **Search & OpenSearch sanity**:
   - Configures Magento to use `opensearch` (Warden’s service)
@@ -41,8 +41,8 @@ Repo: `j-scriptz/mage-mirror`
 
 ## Prerequisites
 
-- **macOS** (Apple Silicon or Intel)
-- **Docker Desktop for Mac**
+- **macOS** (Apple Silicon or Intel) or **Linux**
+- **Docker Desktop for Mac or Docker on Linux**
   - Docker Compose v2 enabled
   - Enough resources (6GB+ RAM recommended)
 - **Homebrew** (optional; script can install it)
@@ -61,7 +61,6 @@ git clone https://github.com/j-scriptz/mage-mirror.git
 cd mage-mirror
 
 # 2) Configure (optional but recommended)
-cp _mage-mirror.config.sample _mage-mirror.config
 # edit _mage-mirror.config to match your setup
 
 # 3) Make the installer executable
@@ -146,18 +145,18 @@ INSTALL_HYVA=ask
 ```bash
 # ENABLE_MULTISTORE:
 #   yes  = configure app.${PROJECT_NAME}.test + ${PROJECT_NAME}.test with a secondary 'subcats' website
-#   no   = single-store only (no subcats website or host-based routing)
+#   no   = single-store only (no sub websites or host-based routing)
 #   ask  = prompt at runtime
 ENABLE_MULTISTORE=ask
 ```
 
 - When enabled:
   - `app.${PROJECT_NAME}.test` → base website
-  - `${PROJECT_NAME}.test` → `subcats` website
+  - `app#.${PROJECT_NAME}.test` → `sub` websites
   - `pub/index.php` gets a small host switch to set `MAGE_RUN_CODE` correctly.
 - When disabled:
   - Only the base website is configured
-  - No host-based routing or subcats URLs are applied
+  - No host-based routing or sub URLs are applied
 
 ### Upgrade mode (clone + upgrade)
 
