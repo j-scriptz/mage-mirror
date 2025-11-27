@@ -73,13 +73,13 @@ chmod +x _mage-mirror.sh
 
 The script will:
 
-1. Load `_master.config` (if present)
+1. Load `_mage-mirror.config` (if present)
 2. Ask for anything left as `ask`
 3. Spin up a full **Magento + Hyvä + OpenSearch** Warden environment
 
 ---
 
-## Central configuration: `_master.config`
+## Central configuration: `_mage-mirror.config`
 
 Instead of multiple env files, everything is driven from one optional config:
 
