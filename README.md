@@ -369,7 +369,7 @@ PROJECT_NAME=mage USE_EXISTING_DB=yes USE_RSYNC_MAGENTO=yes USE_RSYNC_TAR_MAGENT
 ## TL;DR
 
 - One script: **`_mage-mirror.sh`**
-- One config: **`_master.config`**
+- One config: **`_mage-mirror.config`**
 - Three core modes:
   1. Fresh install (Magento + Hyvä)
   2. Clone existing site (code + DB)
@@ -377,4 +377,306 @@ PROJECT_NAME=mage USE_EXISTING_DB=yes USE_RSYNC_MAGENTO=yes USE_RSYNC_TAR_MAGENT
 
 Perfect for quickly spinning up **mirror environments**, rehearsal upgrades, or portfolio-ready Hyvä stores on macOS with Warden.
 
-Happy hacking. 🧙‍♂️
+````markdown
+# SSH Key Setup Guide
+
+This guide walks you through:
+
+1. Generating an SSH key on your **local machine**
+2. Adding the public key to **your server** for passwordless login
+3. (Optional) Configuring a convenient `~/.ssh/config` alias
+
+Examples assume macOS / Linux. Windows notes are at the bottom.
+
+---
+
+## 1. SSH Key Basics
+
+You will create an SSH **key pair**:
+
+- **Private key** – stays on your local machine (e.g. `~/.ssh/id_ed25519`)  
+  > Never copy this to any server or share it.
+
+- **Public key** – safe to share (e.g. `~/.ssh/id_ed25519.pub`)  
+  > This goes into `~/.ssh/authorized_keys` on your server.
+
+SSH uses the private key locally to prove your identity; the server only needs the public key.
+
+---
+
+## 2. Check for Existing Keys
+
+On your **local machine** (macOS / Linux / WSL):
+
+```bash
+ls -al ~/.ssh
+````
+
+If you see any of the following, you may already have keys:
+
+* `id_ed25519` / `id_ed25519.pub`
+* `id_rsa` / `id_rsa.pub`
+
+You can reuse those if you like.
+If you want a fresh key just for this setup, continue to the next step.
+
+---
+
+## 3. Generate a New SSH Key Pair
+
+On your **local machine**:
+
+```bash
+ssh-keygen -t ed25519 -C "your_email@example.com"
+```
+
+You’ll be prompted:
+
+1. **Enter file in which to save the key**
+
+   * Press **Enter** to accept the default: `~/.ssh/id_ed25519`
+
+2. **Enter passphrase (empty for no passphrase)**
+
+   * For more security, set a passphrase (recommended for your main dev machine).
+   * For fully non-interactive scripts, you may leave this empty (less secure).
+
+This will create:
+
+* `~/.ssh/id_ed25519` – private key
+* `~/.ssh/id_ed25519.pub` – public key
+
+---
+
+## 4. Add the Key to the SSH Agent (Optional but Recommended)
+
+This lets your OS cache the decrypted key, so you don’t have to re-enter the passphrase constantly.
+
+### macOS / Linux / WSL
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+> Note: On macOS, you can add this to your shell profile later for automatic agent setup.
+
+---
+
+## 5. Copy the Public Key to the Server
+
+We’ll use the following placeholders:
+
+* **Server user:** `YOUR_USER`
+* **Server host:** `your.server.com`
+
+Replace both with your real values.
+
+### Option A: Using `ssh-copy-id` (Easiest)
+
+On your **local machine**:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub YOUR_USER@your.server.com
+```
+
+You’ll be prompted for your **server password** one last time.
+
+`ssh-copy-id` will:
+
+* Create `~/.ssh` on the server if it doesn’t exist
+* Append your key to `~/.ssh/authorized_keys`
+* Set correct file permissions automatically
+
+If `ssh-copy-id` is not available, use Option B.
+
+---
+
+### Option B: Manual Copy
+
+1. **Print your public key** locally:
+
+   ```bash
+   cat ~/.ssh/id_ed25519.pub
+   ```
+
+   Copy the entire line to your clipboard.
+
+2. **SSH into the server** using your password:
+
+   ```bash
+   ssh YOUR_USER@your.server.com
+   ```
+
+3. On the **server**, create the `.ssh` directory if needed:
+
+   ```bash
+   mkdir -p ~/.ssh
+   chmod 700 ~/.ssh
+   ```
+
+4. Open (or create) `authorized_keys` on the server:
+
+   ```bash
+   nano ~/.ssh/authorized_keys
+   # or use vim, etc.
+   ```
+
+   Paste the public key line you copied earlier, then save and exit.
+
+5. Fix permissions on the server:
+
+   ```bash
+   chmod 600 ~/.ssh/authorized_keys
+   ```
+
+6. Exit the server:
+
+   ```bash
+   exit
+   ```
+
+---
+
+## 6. Test the SSH Key Login
+
+Back on your **local machine**:
+
+```bash
+ssh YOUR_USER@your.server.com
+```
+
+Expected behavior:
+
+* You should **not** be asked for the server’s password.
+* If you set a passphrase on the key, you may be asked for that (once per session if using `ssh-agent`).
+
+If you are still prompted for the server password, check:
+
+* Correct username (`YOUR_USER` vs `root`, etc.)
+* Public key is actually present in `~/.ssh/authorized_keys` on the server
+* File permissions on the server side:
+
+  * `~/.ssh` → `700`
+  * `~/.ssh/authorized_keys` → `600`
+* SSH configuration on the server (`/etc/ssh/sshd_config`) allows key authentication:
+
+  * `PubkeyAuthentication yes`
+  * `AuthorizedKeysFile .ssh/authorized_keys`
+
+> If you change `sshd_config`, remember to restart the SSH service (e.g., `sudo systemctl restart sshd`).
+
+---
+
+## 7. (Optional) Add a Host Alias in `~/.ssh/config`
+
+This lets you use a short alias (`ssh webetta`) instead of typing the full user + host each time and lets you pin a specific key.
+
+On your **local machine**:
+
+```bash
+nano ~/.ssh/config
+```
+
+Add:
+
+```sshconfig
+Host my-server
+    HostName your.server.com
+    User YOUR_USER
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+```
+
+Now you can connect with:
+
+```bash
+ssh my-server
+```
+
+---
+
+## 8. Windows Notes
+
+You can follow this guide on Windows in two main ways:
+
+### Option 1: WSL (Recommended)
+
+If you’re using **Windows Subsystem for Linux (WSL)**:
+
+* Open your WSL terminal (Ubuntu, etc.)
+* Follow the **Linux** instructions exactly
+* Keys are stored in: `/home/<your-username>/.ssh`
+
+### Option 2: Native Windows OpenSSH (PowerShell)
+
+From **PowerShell**:
+
+```powershell
+ssh-keygen -t ed25519 -C "your_email@example.com"
+```
+
+By default, keys are stored in:
+
+```text
+C:\Users\<YourUser>\.ssh\id_ed25519
+C:\Users\<YourUser>\.ssh\id_ed25519.pub
+```
+
+You can then:
+
+* Use `type $env:USERPROFILE\.ssh\id_ed25519.pub` to print the public key
+* Copy it into `~/.ssh/authorized_keys` on the server using the same **manual copy** process as above
+
+---
+
+## 9. Quick Reference
+
+### Generate key (local):
+
+```bash
+ssh-keygen -t ed25519 -C "your_email@example.com"
+```
+
+### Start agent + add key:
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+### Copy key (if `ssh-copy-id` available):
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub YOUR_USER@your.server.com
+```
+
+### Manual server-side setup:
+
+```bash
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+nano ~/.ssh/authorized_keys  # paste key, save
+chmod 600 ~/.ssh/authorized_keys
+```
+
+### Test:
+
+```bash
+ssh YOUR_USER@your.server.com
+```
+
+### Optional `~/.ssh/config` entry:
+
+```sshconfig
+Host my-server
+    HostName your.server.com
+    User YOUR_USER
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+```
+
+```
+```
+
