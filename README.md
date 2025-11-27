@@ -41,7 +41,7 @@ Repo: `j-scriptz/mage-mirror`
 
 ## Prerequisites
 
-- **macOS** (Apple Silicon or Intel) or **Linux**
+- **macOS** (Apple Silicon or Intel) or **Linux** or **Ubuntu / WSL2 on Windows**
 - **Docker Desktop for Mac or Docker on Linux**
   - Docker Compose v2 enabled
   - Enough resources (6GB+ RAM recommended)
