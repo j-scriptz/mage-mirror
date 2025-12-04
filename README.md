@@ -302,7 +302,7 @@ You can override Traefik values by setting:
 # SUBCATS_URL=https://mage.test/
 ```
 
-in `_master.config` if needed.
+in `_mage-mirror.config` if needed.
 
 ---
 
@@ -362,7 +362,7 @@ PROJECT_NAME=mage USE_EXISTING_DB=yes EXISTING_DB_SQL=db/mage-multi-hyva.sql EXI
 PROJECT_NAME=mage USE_EXISTING_DB=yes USE_RSYNC_MAGENTO=yes USE_RSYNC_TAR_MAGENTO=yes USE_REMOTE_DB_DUMP=yes WITH_SAMPLE_DATA=no INSTALL_HYVA=yes ENABLE_MULTISTORE=yes UPGRADE_MAGENTO=yes UPGRADE_MAGENTO_VERSION=2.4.* ./_mage-mirror.sh
 ```
 
-(Assumes `_master.config` defines working `REMOTE_*` values.)
+(Assumes `_mage-mirror.config` defines working `REMOTE_*` values.)
 
 ---
 
