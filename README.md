@@ -1,3 +1,5 @@
+![mage-mirror quick demo](mage-mirror-quicker-clip-3to25-800w.gif)
+
 # Magento + Hyvä via Warden  
 **_mage-mirror.sh v1.0**
 
@@ -63,7 +65,8 @@ cd mage-mirror
 # 2) Configure (optional but recommended)
 # edit _mage-mirror.config to match your setup
 
-# 3) Make the installer executable
+# 3) Make the installer executable![mage-mirror-quicker-clip-3to25-800w](https://github.com/user-attachments/assets/b360a9f7-6641-402c-9fc5-fdb8ddc2ec1c)
+
 chmod +x _mage-mirror.sh
 
 # 4) Run it
