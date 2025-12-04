@@ -6,7 +6,7 @@ set -euo pipefail
 # If .env.config exists, source it to pre-populate PROJECT_NAME, USE_EXISTING_DB,
 # remote rsync settings (REMOTE_*), and other toggles used below. Any real
 # environment variables you export before running the script will always win.
-CONFIG_FILE="${CONFIG_FILE:-_master.config}"
+CONFIG_FILE="${CONFIG_FILE:-_mage-mirror.config}"
 if [[ -f "${CONFIG_FILE}" ]]; then
   echo "ℹ️  Loading configuration from ${CONFIG_FILE}..."
   # shellcheck disable=SC1090
@@ -18,6 +18,17 @@ fi
 PROJECT_NAME="${PROJECT_NAME:-mage}"       # WARDEN_ENV_NAME
 MAGENTO_PACKAGE="${MAGENTO_PACKAGE:-magento/project-community-edition}"
 MAGENTO_VERSION="${MAGENTO_VERSION:-2.4.x}"   # "2.4.x" = latest 2.4
+
+MAGENTO_DB_HOST="${MAGENTO_DB_HOST:-db}"
+MAGENTO_DB_NAME="${MAGENTO_DB_NAME:-magento}"
+MAGENTO_DB_USER="${MAGENTO_DB_USER:-magento}"
+MAGENTO_DB_PASSWORD="${MAGENTO_DB_PASSWORD:-magento}"
+
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASS="${ADMIN_PASS:-Admin123!}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
+ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-Admin}"
+ADMIN_LASTNAME="${ADMIN_LASTNAME:-User}"
 
 # Let warden env-init decide these (usually TRAEFIK_DOMAIN=${PROJECT_NAME}.test, TRAEFIK_SUBDOMAIN=app)
 TRAEFIK_DOMAIN=""
@@ -44,6 +55,8 @@ ENABLE_MULTISTORE="${ENABLE_MULTISTORE:-ask}" # "yes", "no", or "ask"
 UPGRADE_MAGENTO="${UPGRADE_MAGENTO:-ask}"     # "yes", "no", or "ask" (existing-DB path only)
 UPGRADE_MAGENTO_VERSION="${UPGRADE_MAGENTO_VERSION:-${MAGENTO_VERSION:-2.4.*}}"  # target core version for upgrade
 
+INSTALL_JSCRIPTZ="${INSTALL_JSCRIPTZ:-ask}"           # "yes", "no", or "ask"
+
 DISABLE_TWOFACTOR_AUTH="${DISABLE_TWOFACTOR_AUTH:-true}"
 MAGENTO_DEVELOPER_MODE="${MAGENTO_DEVELOPER_MODE:-true}"
 DISABLE_CONFIG_CACHE="${DISABLE_CONFIG_CACHE:-true}"
@@ -54,7 +67,7 @@ ADMIN_FRONTNAME="${ADMIN_FRONTNAME:-mage_admin}"
 
 
 echo "=========================================="
-echo " Magento 2 + Hyvä via Warden (macOS / Linux)"
+echo " Magento 2 + Hyvä via Warden (macOS / Linux / Windows WSL2/Ubuntu)"
 echo " Project        : ${PROJECT_NAME}"
 echo " Primary domain : https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/"
 echo " Admin URL      : /${ADMIN_FRONTNAME}"
@@ -178,7 +191,7 @@ fi
 
 if [[ "${USE_EXISTING_DB}" == "ask" ]]; then
   echo ""
-  read -r -p "Use existing Magento DB dump + env.php (instead of fresh setup:install)? (y/N): " REPLY
+  read -r -p "Use existing Magento (instead of fresh setup:install)? (y/N): " REPLY
   if [[ "$REPLY" =~ ^[Yy]$ ]]; then
     USE_EXISTING_DB="yes"
   else
@@ -400,7 +413,7 @@ if [[ "${USE_EXISTING_DB}" == "yes" ]]; then
 
     if [[ -z "${RSYNC_REMOTE_DB_HOST}" || -z "${RSYNC_REMOTE_DB_NAME}" || -z "${RSYNC_REMOTE_DB_USER}" || -z "${RSYNC_REMOTE_DB_PASSWORD}" ]]; then
       echo "❌ USE_REMOTE_DB_DUMP=yes but REMOTE_DB_HOST/NAME/USER/PASSWORD not set in ${CONFIG_FILE}."
-      echo "   Make sure your .env.config defines REMOTE_DB_HOST, REMOTE_DB_NAME, REMOTE_DB_USER, REMOTE_DB_PASSWORD."
+      echo "   Make sure your _mage-mirror.config defines REMOTE_DB_HOST, REMOTE_DB_NAME, REMOTE_DB_USER, REMOTE_DB_PASSWORD."
       exit 1
     fi
 
@@ -508,18 +521,20 @@ if [ "${USE_RSYNC_MAGENTO:-no}" = "yes" ]; then
     echo "    Creating tarball on remote at ${REMOTE_TAR}..."
 
     EXCLUDES="--exclude=${REMOTE_BASE}/generated \
-      --exclude=${REMOTE_BASE}/var/cache \
-      --exclude=${REMOTE_BASE}/var/report \
-      --exclude=${REMOTE_BASE}/var/log \
-      --exclude=${REMOTE_BASE}/var/generated \
-      --exclude=${REMOTE_BASE}/var/view_preprocessed"
+          --exclude=${REMOTE_BASE}/var/cache \
+          --exclude=${REMOTE_BASE}/var/report \
+          --exclude=${REMOTE_BASE}/var/log \
+          --exclude=${REMOTE_BASE}/var/generated \
+          --exclude=${REMOTE_BASE}/var/view_preprocessed \
+          --exclude=${REMOTE_BASE}/pub/static \
+          --exclude=${REMOTE_BASE}/pub/media/downloadable"
 
     if [ "${EXCLUDE_MEDIA_FROM_TAR:-no}" = "yes" ]; then
       EXCLUDES="${EXCLUDES} --exclude=${REMOTE_BASE}/pub/media"
     fi
 
     $RSYNC_SSH_CMD "${RSYNC_REMOTE_USER}@${RSYNC_REMOTE_HOST}" \
-      "tar czf ${REMOTE_TAR} -C \"${REMOTE_DIR}\" ${EXCLUDES} \"${REMOTE_BASE}\"" || {
+      "tar czfh ${REMOTE_TAR} --ignore-failed-read -C \"${REMOTE_DIR}\" ${EXCLUDES} \"${REMOTE_BASE}\"" || {
         echo "❌ Failed to create tarball on remote host."
         exit 1
       }
@@ -534,7 +549,20 @@ if [ "${USE_RSYNC_MAGENTO:-no}" = "yes" ]; then
 
     echo "    Extracting tarball into /var/www/html..."
     mkdir -p /var/www/html
+
+    # Clean up any bad pub / pub/media from previous runs
+    if [ -e /var/www/html/pub ] && [ ! -d /var/www/html/pub ]; then
+      echo "    ⚠️ /var/www/html/pub exists but is not a directory (likely a symlink); removing."
+      rm -f /var/www/html/pub
+    fi
+
+    if [ -e /var/www/html/pub/media ] && [ ! -d /var/www/html/pub/media ]; then
+      echo "    ⚠️ /var/www/html/pub/media exists but is not a directory (likely a symlink); removing."
+      rm -f /var/www/html/pub/media
+    fi
+
     tar xzf /tmp/magento-remote.tar.gz -C /var/www/html --strip-components=1
+
   else
     echo "    Mode: direct rsync of directory"
     echo "    Source: ${RSYNC_REMOTE_USER}@${RSYNC_REMOTE_HOST}:${RSYNC_REMOTE_PATH}"
@@ -748,19 +776,16 @@ else
 fi
 
 echo "➡️  Forcing search configuration to Warden OpenSearch..."
+echo "    bin/magento config:set catalog/search/engine opensearch"
+echo "    bin/magento config:set catalog/search/opensearch_server_hostname opensearch"
+echo "    bin/magento config:set catalog/search/opensearch_server_port 9200"
+echo "    bin/magento config:set catalog/search/opensearch_index_prefix magento2"
+echo "    bin/magento config:set catalog/search/opensearch_enable_auth 0"
 bin/magento config:set catalog/search/engine opensearch || true
 bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
 bin/magento config:set catalog/search/opensearch_server_port 9200 || true
 bin/magento config:set catalog/search/opensearch_index_prefix magento2 || true
 bin/magento config:set catalog/search/opensearch_enable_auth 0 || true
-
-echo "➡️  Running setup:upgrade against imported DB..."
-bin/magento setup:upgrade
-
-echo "➡️  Recompiling and deploying static content..."
-bin/magento setup:di:compile
-bin/magento setup:static-content:deploy -f
-bin/magento cache:flush
 
 echo "➡️  Updating base URLs for local store configuration..."
 
@@ -816,6 +841,15 @@ else
     ADMIN_FRONTNAME="${ADMIN_FRONTNAME}" \
     TRAEFIK_DOMAIN="${TRAEFIK_DOMAIN}" \
     TRAEFIK_SUBDOMAIN="${TRAEFIK_SUBDOMAIN}" \
+    ADMIN_USER="${ADMIN_USER}" \
+    ADMIN_PASS="${ADMIN_PASS}" \
+    ADMIN_EMAIL="${ADMIN_EMAIL}" \
+    ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME}" \
+    ADMIN_LASTNAME="${ADMIN_LASTNAME}" \
+    MAGENTO_DB_HOST="${MAGENTO_DB_HOST}" \
+    MAGENTO_DB_NAME="${MAGENTO_DB_NAME}" \
+    MAGENTO_DB_USER="${MAGENTO_DB_USER}" \
+    MAGENTO_DB_PASSWORD="${MAGENTO_DB_PASSWORD}" \
     bash <<'MAGENTO_NEW'
 
 set -e
@@ -844,6 +878,11 @@ rm -rf /tmp/magento/
 echo "➡️  Running bin/magento setup:install..."
 bin/magento setup:install \
   --backend-frontname="${ADMIN_FRONTNAME}" \
+  --admin-firstname="${ADMIN_FIRSTNAME}" \
+  --admin-lastname="${ADMIN_LASTNAME}" \
+  --admin-email="${ADMIN_EMAIL}" \
+  --admin-user="${ADMIN_USER}" \
+  --admin-password="${ADMIN_PASS}" \
   --amqp-host=rabbitmq \
   --amqp-port=5672 \
   --amqp-user=guest \
@@ -875,6 +914,10 @@ bin/magento setup:install \
   --use-rewrites=1
 
 echo "➡️  Applying base URL + dev-friendly config..."
+echo "  - bin/magento config:set web/unsecure/base_url \"https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/\""
+echo "  - bin/magento config:set web/unsecure/base_link_url \"https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/\""
+echo "  - bin/magento config:set web/secure/base_url \"https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/\""
+echo "  - bin/magento config:set web/secure/base_link_url \"https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/\""
 bin/magento config:set web/unsecure/base_url \
   "https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/"
 bin/magento config:set web/unsecure/base_link_url \
@@ -907,6 +950,29 @@ MAGENTO_NEW
   echo ""
 fi
 
+if [[ "${INSTALL_JSCRIPTZ}" == "ask" ]]; then
+  read -r -p "Install Jscriptz Subcats extension? (Hyva/Luma compatible) (y/N): " REPLY
+  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    INSTALL_JSCRIPTZ="yes"
+  else
+    INSTALL_JSCRIPTZ="no"
+  fi
+fi
+
+if [[ "${INSTALL_JSCRIPTZ}" == "yes" ]]; then
+  echo "➡️  Installing Jscriptz Subcats extension"
+  warden env exec -T php-fpm bash <<'JSCRIPTZ'
+set -e
+cd /var/www/html
+composer require jscriptz/module-subcats:^2.1
+bin/magento module:enable Jscriptz_Subcats || true
+JSCRIPTZ
+
+  echo "✅ jscriptz/module-subcats installed."
+  echo ""
+fi
+
+
 
 echo ""
 echo "➡️  Final sanity: ensure Magento CLI 'setup' exists and local base URLs are correct..."
@@ -920,6 +986,7 @@ warden env exec -T php-fpm env \
   MAGENTO_DEVELOPER_MODE="${MAGENTO_DEVELOPER_MODE}" \
   DISABLE_CONFIG_CACHE="${DISABLE_CONFIG_CACHE}" \
   DISABLE_FULLPAGE_CACHE="${DISABLE_FULLPAGE_CACHE}" \
+  ADMIN_FRONTNAME="${ADMIN_FRONTNAME}" \
   bash <<'FINAL_FIX'
 
 set -e
@@ -958,26 +1025,91 @@ else
   echo "    • setup/config/application.config.php already present; nothing to do."
 fi
 
+if [[ -f app/etc/env.php ]]; then
+  php <<'PHP'
+<?php
+$envFile = __DIR__ . '/app/etc/env.php';
+if (!file_exists($envFile)) {
+    echo "env.php not found; skipping DB normalization.\n";
+    exit(0);
+}
+
+$env = include $envFile;
+
+// Local defaults (overrideable via env if you want later)
+$localDbName = getenv('MAGENTO_DB_NAME') ?: 'magento';
+$localDbUser = getenv('MAGENTO_DB_USER') ?: 'magento';
+$localDbPass = getenv('MAGENTO_DB_PASSWORD') ?: 'magento';
+$localHost   = getenv('MAGENTO_DB_HOST') ?: 'db';
+
+if (isset($env['db']['connection']) && is_array($env['db']['connection'])) {
+    foreach ($env['db']['connection'] as $name => &$conn) {
+        if (isset($conn['host']) && $conn['host'] !== $localHost) {
+            $old = $conn['host'];
+            $conn['host'] = $localHost;
+            echo "Fixed DB host for connection '{$name}' from '{$old}' to '{$localHost}'.\n";
+        }
+        if (isset($conn['dbname']) && $conn['dbname'] !== $localDbName) {
+            $old = $conn['dbname'];
+            $conn['dbname'] = $localDbName;
+            echo "Fixed DB name for connection '{$name}' from '{$old}' to '{$localDbName}'.\n";
+        }
+        if (isset($conn['username']) && $conn['username'] !== $localDbUser) {
+            $old = $conn['username'];
+            $conn['username'] = $localDbUser;
+            echo "Fixed DB user for connection '{$name}' from '{$old}' to '{$localDbUser}'.\n";
+        }
+        if (isset($conn['password']) && $conn['password'] !== $localDbPass) {
+            $conn['password'] = $localDbPass;
+            echo "Fixed DB password for connection '{$name}'.\n";
+        }
+    }
+
+    file_put_contents(
+        $envFile,
+        "<?php\nreturn " . var_export($env, true) . ";\n"
+    );
+} else {
+    echo "No db/connection section found in env.php; skipping DB normalization.\n";
+}
+PHP
+else
+  echo "env.php not found; skipping DB normalization."
+fi
+
+
 php <<'PHP'
 <?php
 $envFile = __DIR__ . '/app/etc/env.php';
 if (!file_exists($envFile)) {
-    fwrite(STDERR, "env.php not found; skipping DB host fix.\n");
+    echo "env.php not found; skipping backend frontName normalization.\n";
     exit(0);
 }
+
 $env = include $envFile;
-if (!is_array($env) || !isset($env['db']['connection']['default'])) {
-    fwrite(STDERR, "env.php does not contain expected db/connection/default structure; skipping DB host fix.\n");
+if (!is_array($env)) {
+    echo "env.php did not return an array; skipping backend frontName normalization.\n";
     exit(0);
 }
-$default = &$env['db']['connection']['default'];
-if (isset($default['host']) && $default['host'] !== 'db') {
-    $old = $default['host'];
-    $default['host'] = 'db';
-    file_put_contents($envFile, "<?php\nreturn " . var_export($env, true) . ";\n");
-    echo "➡️  Fixed DB host in env.php from '{$old}' to 'db'." . PHP_EOL;
+
+$targetFrontName = getenv('ADMIN_FRONTNAME') ?: 'mage_admin';
+
+if (!isset($env['backend'])) {
+    $env['backend'] = [];
+}
+
+if (!isset($env['backend']['frontName']) || $env['backend']['frontName'] !== $targetFrontName) {
+    $old = isset($env['backend']['frontName']) ? $env['backend']['frontName'] : '(none)';
+    $env['backend']['frontName'] = $targetFrontName;
+
+    file_put_contents(
+        $envFile,
+        "<?php\nreturn " . var_export($env, true) . ";\n"
+    );
+
+    echo "Fixed backend frontName from '{$old}' to '{$targetFrontName}'.\n";
 } else {
-    echo "ℹ️  DB host in env.php already set to 'db' (or missing); nothing to change." . PHP_EOL;
+    echo "Backend frontName already set to '{$targetFrontName}'; nothing to change.\n";
 }
 PHP
 
@@ -1005,6 +1137,7 @@ if [ "${ENABLE_MULTISTORE:-no}" = "yes" ]; then
 fi
 
 echo "  - Base URLs are now:"
+echo "    (web/unsecure/base_url, web/unsecure/base_link_url, web/secure/base_url, web/secure/base_link_url)"
 bin/magento config:show web/unsecure/base_url      || true
 bin/magento config:show web/unsecure/base_link_url || true
 bin/magento config:show web/secure/base_url        || true
@@ -1030,9 +1163,22 @@ if [ "${DISABLE_FULLPAGE_CACHE:-true}" = "true" ]; then
   echo "  - Disabling full_page cache..."
   bin/magento cache:disable full_page || true
 fi
+echo "  - Disabling admin login CAPTCHA..."
+echo "    bin/magento config:set admin/captcha/enable 0"
+bin/magento config:set admin/captcha/enable 0 || true
 
-echo "  - Flushing cache..."
-bin/magento cache:flush || true
+echo "➡️  Forcing search configuration to Warden OpenSearch..."
+echo "    bin/magento config:set catalog/search/engine opensearch"
+echo "    bin/magento config:set catalog/search/opensearch_server_hostname opensearch"
+echo "    bin/magento config:set catalog/search/opensearch_server_port 9200"
+echo "    bin/magento config:set catalog/search/opensearch_index_prefix magento2"
+echo "    bin/magento config:set catalog/search/opensearch_enable_auth 0"
+bin/magento config:set catalog/search/engine opensearch || true
+bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
+bin/magento config:set catalog/search/opensearch_server_port 9200 || true
+bin/magento config:set catalog/search/opensearch_index_prefix magento2 || true
+bin/magento config:set catalog/search/opensearch_enable_auth 0 || true
+
 
 FINAL_FIX
 
@@ -1054,15 +1200,13 @@ if [[ "${USE_EXISTING_DB}" != "yes" ]]; then
 set -e
 cd /var/www/html
 bin/magento sampledata:deploy
-bin/magento setup:upgrade
-bin/magento cache:flush
 SAMPLEDATA
     echo "✅ Sample data installed."
     echo ""
   fi
 fi
 
-### ---- Optional: Hyvä theme install (OSS via GitHub mirrors, no license key) ----
+### ---- Optional: Hyvä theme install (private Packagist + license key) ----
 
 if [[ "${INSTALL_HYVA}" == "ask" ]]; then
   # If Hyvä is already present in the vendor tree (e.g. rsynced/tar from live),
@@ -1111,11 +1255,102 @@ else
   composer require hyva-themes/magento2-default-theme:"^1.4" --with-all-dependencies --prefer-source
 fi
 
-echo "  - Running Magento upgrade and deploy steps..."
-bin/magento setup:upgrade
-bin/magento setup:di:compile
-bin/magento setup:static-content:deploy -f
-bin/magento cache:flush
+echo "  - Detecting Hyvä *default* theme_id via Magento ORM..."
+HYVA_THEME_ID=$(php -r '
+require "app/bootstrap.php";
+use Magento\Framework\App\Bootstrap;
+
+$bootstrap = Bootstrap::create(BP, $_SERVER);
+$objectManager = $bootstrap->getObjectManager();
+
+/** @var \Magento\Theme\Model\ResourceModel\Theme\Collection $collection */
+$collection = $objectManager->get(\Magento\Theme\Model\ResourceModel\Theme\Collection::class);
+
+// Prefer the Hyvä Default theme (theme_path = "Hyva/default")
+$collection->addFieldToFilter("area", "frontend");
+$collection->addFieldToFilter("theme_path", "Hyva/default");
+$theme = $collection->getFirstItem();
+
+// Fallback: any Hyvä frontend theme if explicit default is missing
+if (!$theme->getId()) {
+    $collection = $objectManager->get(\Magento\Theme\Model\ResourceModel\Theme\Collection::class);
+    $collection->addFieldToFilter("area", "frontend");
+    $collection->addFieldToFilter(
+        ["theme_path", "theme_title", "code"],
+        [
+            ["like" => "%Hyva%"],
+            ["like" => "%Hyva%"],
+            ["like" => "%Hyva%"]
+        ]
+    );
+    $collection->setOrder("theme_id", "ASC");
+    $theme = $collection->getFirstItem();
+}
+
+// Normalise to a physical theme if possible
+if ($theme->getId()) {
+    $theme->setType(0)->save();
+}
+
+echo $theme->getId() ?: "";
+')
+
+if [ -z "$HYVA_THEME_ID" ]; then
+  echo "⚠️  Could not detect Hyvä theme in DB; leaving default theme unchanged."
+else
+  echo "  - Found Hyvä Default theme_id=${HYVA_THEME_ID}; setting as default..."
+  bin/magento config:set design/theme/theme_id "$HYVA_THEME_ID"
+fi
+
+HYVA
+
+  echo "✅ Hyvä theme installed and (if detected) set as default."
+  echo ""
+fi
+
+if warden env exec -T php-fpm test -d /var/www/html/vendor/hyva-themes/magento2-theme-module; then
+  echo "Hyvä vendor modules already present in container; skipping Hyvä install."
+  INSTALL_HYVA="no"
+else
+  read -r -p "Install Hyvä theme from their private packagist now? (y/N): " REPLY
+  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    INSTALL_HYVA="yes"
+  else
+    INSTALL_HYVA="no"
+  fi
+fi
+
+if [[ "${INSTALL_HYVA}" == "yes" ]]; then
+  echo ""
+  echo "➡️  Installing Hyvä theme (private Packagist + license key)..."
+
+  # Sanity check for required vars
+  if [[ -z "${HYVA_REPO:-}" || -z "${HYVA_TOKEN:-}" ]]; then
+    echo "❌ HYVA_REPO or HYVA_TOKEN is not set."
+    echo "   Set them in _mage-mirror.config before running this installer."
+    exit 1
+  fi
+
+  warden env exec -T php-fpm env \
+    HYVA_REPO="${HYVA_REPO}" \
+    HYVA_TOKEN="${HYVA_TOKEN}" \
+    bash <<'HYVA'
+set -e
+cd /var/www/html
+
+echo "  - Configuring Hyvä private Packagist repository..."
+composer config --auth http-basic.hyva-themes.repo.packagist.com token "${HYVA_TOKEN}"
+composer config repositories.private-packagist composer "${HYVA_REPO}"
+
+echo "  - Checking for existing Hyvä vendor modules..."
+if [ -d vendor/hyva-themes/magento2-theme-module ]; then
+  echo "    Hyvä vendor modules already present; skipping composer require."
+else
+  echo "  - Clearing composer cache..."
+  composer clear-cache
+  echo "  - Requiring hyva-themes/magento2-default-theme..."
+  composer require hyva-themes/magento2-default-theme:"^1.4" --with-all-dependencies --prefer-source
+fi
 
 echo "  - Detecting Hyvä *default* theme_id via Magento ORM..."
 HYVA_THEME_ID=$(php -r '
@@ -1164,11 +1399,6 @@ else
   bin/magento config:set design/theme/theme_id "$HYVA_THEME_ID"
 fi
 
-echo "  - Reindexing and installing cron..."
-bin/magento indexer:reindex
-bin/magento cache:flush
-bin/magento cron:install
-
 HYVA
 
   echo "✅ Hyvä theme installed and (if detected) set as default."
@@ -1176,13 +1406,9 @@ HYVA
 fi
 
 ### ---- Multi-store: domain → website code routing (pub/index.php) ----
-# For your current setup:
-#   app.mage.test   → website "base"
-#   mage.test       → website "subcats"
-#   default         → website "base"
 
 if [[ "${USE_EXISTING_DB}" == "yes" && "${ENABLE_MULTISTORE}" == "yes" ]]; then
-  echo "➡️  Ensuring pub/index.php sets website based on HTTP_HOST (mage.test → base, app.mage.test → subcats)..."
+  echo "➡️  Ensuring pub/index.php sets website based on HTTP_HOST (mage.test → base, app.mage.test → multi-store)..."
 
   warden env exec -T php-fpm bash <<'MULTISTORE'
 set -e
@@ -1197,11 +1423,11 @@ else
     echo "<?php"
     echo '$host = $_SERVER["HTTP_HOST"] ?? "";'
     echo 'switch ($host) {'
-    echo '    case "app.mage.test":'
+    echo '    case "mage.test":'
     echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
     echo '        $_SERVER["MAGE_RUN_CODE"] = "base";'
     echo '        break;'
-    echo '    case "mage.test":'
+    echo '    case "app.mage.test":'
     echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
     echo '        $_SERVER["MAGE_RUN_CODE"] = "subcats";'
     echo '        break;'
@@ -1218,6 +1444,79 @@ fi
 
 MULTISTORE
 fi
+
+
+echo ""
+echo "➡️  Running final Magento deployment (setup:upgrade, di:compile, static content, cache)..."
+warden env exec -T php-fpm bash <<'FINAL_DEPLOY'
+set -e
+cd /var/www/html
+
+echo "  - Running setup:upgrade..."
+bin/magento setup:upgrade
+
+echo "  - Running setup:di:compile..."
+bin/magento setup:di:compile
+
+echo "  - Running setup:static-content:deploy -f..."
+bin/magento setup:static-content:deploy -f
+
+echo "  - Checking for Hyvä theme to set as default (if present)..."
+HYVA_THEME_ID=$(php -r '
+require "app/bootstrap.php";
+use Magento\Framework\App\Bootstrap;
+
+$bootstrap = Bootstrap::create(BP, $_SERVER);
+$objectManager = $bootstrap->getObjectManager();
+
+/** @var \Magento\Theme\Model\ResourceModel\Theme\Collection $collection */
+$collection = $objectManager->get(\Magento\Theme\Model\ResourceModel\Theme\Collection::class);
+
+// Prefer the Hyvä Default theme (theme_path = "Hyva/default")
+$collection->addFieldToFilter("area", "frontend");
+$collection->addFieldToFilter("theme_path", "Hyva/default");
+$theme = $collection->getFirstItem();
+
+// Fallback: any Hyvä frontend theme if explicit default is missing
+if (!$theme->getId()) {
+    $collection = $objectManager->get(\Magento\Theme\Model\ResourceModel\Theme\Collection::class);
+    $collection->addFieldToFilter("area", "frontend");
+    $collection->addFieldToFilter(
+        ["theme_path", "theme_title", "code"],
+        [
+            ["like" => "%Hyva%"],
+            ["like" => "%Hyva%"],
+            ["like" => "%Hyva%"]
+        ]
+    );
+    $collection->setOrder("theme_id", "ASC");
+    $theme = $collection->getFirstItem();
+}
+
+// Normalise to a physical theme if possible
+if ($theme->getId()) {
+    $theme->setType(0)->save();
+}
+
+echo $theme->getId() ?: "";
+')
+
+if [ -n "$HYVA_THEME_ID" ]; then
+  echo "  - Found Hyvä theme_id=${HYVA_THEME_ID}; setting as default design/theme/theme_id..."
+  echo "    bin/magento config:set design/theme/theme_id $HYVA_THEME_ID"
+  bin/magento config:set design/theme/theme_id "$HYVA_THEME_ID"
+else
+  echo "  - No Hyvä theme detected in DB; leaving default theme unchanged."
+fi
+
+echo "  - Reindexing and installing cron..."
+bin/magento indexer:reindex || true
+bin/magento cron:install || true
+
+echo "  - Flushing & cleaning caches..."
+bin/magento cache:flush || true
+bin/magento cache:clean || true
+FINAL_DEPLOY
 
 echo "=========================================="
 echo " ✅ Warden + Magento install finished"

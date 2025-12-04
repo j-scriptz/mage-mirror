@@ -1,0 +1,9 @@
+services:
+  db:
+    command:
+      - mysqld
+      - --max_allowed_packet=1024M
+      - --innodb_buffer_pool_size=2G      # change to what you want
+      - --innodb_log_buffer_size=256M     # optional
+      - --innodb_log_file_size=1G         # optional
+      - --innodb_write_io_threads=16      # optional
