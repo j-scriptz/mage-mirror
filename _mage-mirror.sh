@@ -52,6 +52,10 @@ EXCLUDE_MEDIA_FROM_TAR="${EXCLUDE_MEDIA_FROM_TAR:-no}" # "yes" to exclude pub/me
 WITH_SAMPLE_DATA="${WITH_SAMPLE_DATA:-ask}"   # "yes", "no", or "ask" (ignored in existing-DB mode)
 INSTALL_HYVA="${INSTALL_HYVA:-ask}"           # "yes", "no", or "ask"
 ENABLE_MULTISTORE="${ENABLE_MULTISTORE:-ask}" # "yes", "no", or "ask"
+# Multi-store: comma-separated host lists (can override in _mage-mirror.config)
+MULTISTORE_BASE_HOSTS="${MULTISTORE_BASE_HOSTS:-}"
+MULTISTORE_SUBCATS_HOSTS="${MULTISTORE_SUBCATS_HOSTS:-}"
+
 UPGRADE_MAGENTO="${UPGRADE_MAGENTO:-ask}"     # "yes", "no", or "ask" (existing-DB path only)
 UPGRADE_MAGENTO_VERSION="${UPGRADE_MAGENTO_VERSION:-${MAGENTO_VERSION:-2.4.*}}"  # target core version for upgrade
 
@@ -162,6 +166,15 @@ fi
 
 echo ""
 echo "Primary domain : https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/"
+
+# Derive default multi-store hosts from TRAEFIK values if not provided
+# Default: root domain → base website, subdomain.domain → subcats website
+if [[ -z "${MULTISTORE_BASE_HOSTS}" ]]; then
+  MULTISTORE_BASE_HOSTS="${TRAEFIK_DOMAIN}"
+fi
+if [[ -z "${MULTISTORE_SUBCATS_HOSTS}" ]]; then
+  MULTISTORE_SUBCATS_HOSTS="${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}"
+fi
 
 # Re-read explicitly to overwrite defaults if needed
 if [[ -f .env ]]; then
@@ -1257,6 +1270,9 @@ fi
 
 echo "  - Detecting Hyvä *default* theme_id via Magento ORM..."
 HYVA_THEME_ID=$(php -r '
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+ini_set("display_errors", "0");
+
 require "app/bootstrap.php";
 use Magento\Framework\App\Bootstrap;
 
@@ -1354,6 +1370,9 @@ fi
 
 echo "  - Detecting Hyvä *default* theme_id via Magento ORM..."
 HYVA_THEME_ID=$(php -r '
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+ini_set("display_errors", "0");
+
 require "app/bootstrap.php";
 use Magento\Framework\App\Bootstrap;
 
@@ -1407,62 +1426,134 @@ fi
 
 ### ---- Multi-store: domain → website code routing (pub/index.php) ----
 
-if [[ "${USE_EXISTING_DB}" == "yes" && "${ENABLE_MULTISTORE}" == "yes" ]]; then
-  echo "➡️  Ensuring pub/index.php sets website based on HTTP_HOST (mage.test → base, app.mage.test → multi-store)..."
+if [[ "${ENABLE_MULTISTORE}" == "yes" ]]; then
+  echo "➡️  Rewriting pub/index.php for multi-store using TRAEFIK + MULTISTORE_* hosts..."
 
-  warden env exec -T php-fpm bash <<'MULTISTORE'
+  warden env exec -T php-fpm env \
+    MULTISTORE_BASE_HOSTS="${MULTISTORE_BASE_HOSTS}" \
+    MULTISTORE_SUBCATS_HOSTS="${MULTISTORE_SUBCATS_HOSTS}" \
+    bash <<'MULTISTORE'
 set -e
 cd /var/www/html/pub
 
-if grep -q 'MAGE_RUN_CODE' index.php; then
-  echo "ℹ️  pub/index.php already contains MAGE_RUN_CODE logic; skipping patch."
-else
-  echo "  - Injecting host-based website switch into pub/index.php..."
-  tmp="index.php.new"
-  {
-    echo "<?php"
-    echo '$host = $_SERVER["HTTP_HOST"] ?? "";'
-    echo 'switch ($host) {'
-    echo '    case "mage.test":'
-    echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
-    echo '        $_SERVER["MAGE_RUN_CODE"] = "base";'
-    echo '        break;'
-    echo '    case "app.mage.test":'
-    echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
-    echo '        $_SERVER["MAGE_RUN_CODE"] = "subcats";'
-    echo '        break;'
-    echo '    default:'
-    echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
-    echo '        $_SERVER["MAGE_RUN_CODE"] = "base";'
-    echo '        break;'
-    echo '}'
-    tail -n +2 index.php
-  } > "$tmp"
+echo "  - Injecting host-based website switch into pub/index.php..."
 
-  mv "$tmp" index.php
-fi
+tmp="index.php.new"
+{
+  echo "<?php"
+  echo '$host = $_SERVER["HTTP_HOST"] ?? "";'
+  echo 'switch ($host) {'
+
+  # Base website hosts
+  IFS=',' read -ra BASE_ARR <<< "$MULTISTORE_BASE_HOSTS"
+  for h in "${BASE_ARR[@]}"; do
+    [ -z "$h" ] && continue
+    printf "    case \"%s\":\n" "$h"
+  done
+  echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
+  echo '        $_SERVER["MAGE_RUN_CODE"] = "base";'
+  echo '        break;'
+
+  # Subcats website hosts
+  IFS=',' read -ra SUB_ARR <<< "$MULTISTORE_SUBCATS_HOSTS"
+  for h in "${SUB_ARR[@]}"; do
+    [ -z "$h" ] && continue
+    printf "    case \"%s\":\n" "$h"
+  done
+  echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
+  echo '        $_SERVER["MAGE_RUN_CODE"] = "subcats";'
+  echo '        break;'
+
+  echo '    default:'
+  echo '        $_SERVER["MAGE_RUN_TYPE"] = "website";'
+  echo '        $_SERVER["MAGE_RUN_CODE"] = "base";'
+  echo '        break;'
+  echo '}'
+
+  # Append original index.php body starting from line 2 (we already emitted <?php)
+  tail -n +2 index.php
+} > "$tmp"
+
+mv "$tmp" index.php
+
+echo "  - pub/index.php multi-store switch updated (BASE: $MULTISTORE_BASE_HOSTS, SUBCATS: $MULTISTORE_SUBCATS_HOSTS)."
 
 MULTISTORE
 fi
 
-
 echo ""
 echo "➡️  Running final Magento deployment (setup:upgrade, di:compile, static content, cache)..."
+
 warden env exec -T php-fpm bash <<'FINAL_DEPLOY'
 set -e
 cd /var/www/html
 
-echo "  - Running setup:upgrade..."
-bin/magento setup:upgrade
+# Suppress deprecation spam (E_DEPRECATED | E_USER_DEPRECATED) for CLI runs.
+# 8191 = E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED
 
-echo "  - Running setup:di:compile..."
-bin/magento setup:di:compile
+echo "  - Pre-fixing zero-byte preview images to avoid 'Wrong file' during setup:upgrade..."
+
+# 1) Create a 1x1 transparent PNG placeholder (once per container)
+PLACEHOLDER="/tmp/mage-mirror-placeholder.png"
+if [ ! -f "$PLACEHOLDER" ]; then
+  php -r '
+    $im = imagecreatetruecolor(1, 1);
+    imagesavealpha($im, true);
+    $transparent = imagecolorallocatealpha($im, 0, 0, 0, 127);
+    imagefill($im, 0, 0, $transparent);
+    imagepng($im, "/tmp/mage-mirror-placeholder.png");
+    imagedestroy($im);
+  '
+fi
+
+# 2) Find zero-byte images under app/ and pub/ (covers Hyvä media/preview.png and others)
+ZERO_LIST=$(mktemp || echo "/tmp/mage-mirror-zero-images.txt")
+find app pub \
+  -type f \
+  \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.gif' \) \
+  -size 0c -print > "$ZERO_LIST" || true
+
+if [ -s "$ZERO_LIST" ]; then
+  echo "    Found zero-byte image files; replacing with placeholder:"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    echo "      • $f"
+    cp "$PLACEHOLDER" "$f" 2>/dev/null || true
+  done < "$ZERO_LIST"
+else
+  echo "    No zero-byte image files found."
+fi
+rm -f "$ZERO_LIST" || true
+
+echo "▶ Running php bin/magento setup:upgrade ..."
+if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:upgrade -vvv; then
+  echo "❌ bin/magento setup:upgrade failed. Dumping Magento logs (inside container):"
+  tail -n 60 var/log/exception.log || true
+  tail -n 60 var/log/system.log || true
+  exit 1
+fi
+
+echo "▶ Running php bin/magento setup:di:compile ..."
+if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:di:compile; then
+  echo "❌ bin/magento setup:di:compile failed. Dumping Magento logs (inside container):"
+  tail -n 60 var/log/exception.log || true
+  tail -n 60 var/log/system.log || true
+  exit 1
+fi
 
 echo "  - Running setup:static-content:deploy -f..."
-bin/magento setup:static-content:deploy -f
+if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:static-content:deploy -f; then
+  echo "❌ bin/magento setup:static-content:deploy failed. Dumping Magento logs (inside container):"
+  tail -n 60 var/log/exception.log || true
+  tail -n 60 var/log/system.log || true
+  exit 1
+fi
 
 echo "  - Checking for Hyvä theme to set as default (if present)..."
 HYVA_THEME_ID=$(php -r '
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+ini_set("display_errors", "0");
+
 require "app/bootstrap.php";
 use Magento\Framework\App\Bootstrap;
 
@@ -1501,21 +1592,22 @@ if ($theme->getId()) {
 echo $theme->getId() ?: "";
 ')
 
-if [ -n "$HYVA_THEME_ID" ]; then
-  echo "  - Found Hyvä theme_id=${HYVA_THEME_ID}; setting as default design/theme/theme_id..."
-  echo "    bin/magento config:set design/theme/theme_id $HYVA_THEME_ID"
-  bin/magento config:set design/theme/theme_id "$HYVA_THEME_ID"
+if [ -n "\$HYVA_THEME_ID" ]; then
+  echo "  - Found Hyvä theme_id=\$HYVA_THEME_ID; setting as default design/theme/theme_id..."
+  echo "    bin/magento config:set design/theme/theme_id \$HYVA_THEME_ID"
+php -d display_errors=0 -d error_reporting=8191 bin/magento config:set design/theme/theme_id "$HYVA_THEME_ID" || true
 else
   echo "  - No Hyvä theme detected in DB; leaving default theme unchanged."
 fi
 
 echo "  - Reindexing and installing cron..."
-bin/magento indexer:reindex || true
-bin/magento cron:install || true
+php -d display_errors=0 -d error_reporting=8191 bin/magento indexer:reindex || true
+php -d display_errors=0 -d error_reporting=8191 bin/magento cron:install || true
 
 echo "  - Flushing & cleaning caches..."
-bin/magento cache:flush || true
-bin/magento cache:clean || true
+php -d display_errors=0 -d error_reporting=8191 bin/magento cache:flush || true
+php -d display_errors=0 -d error_reporting=8191 bin/magento cache:clean || true
+
 FINAL_DEPLOY
 
 echo "=========================================="
