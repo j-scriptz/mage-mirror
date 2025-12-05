@@ -35,6 +35,3 @@ services:
   php-debug:
     volumes:
       - ./.warden/php/zz-config.ini:/etc/php.d/zz-config.ini
-  nginx:
-    volumes:
-      - ./.warden/nginx/custom.conf:/etc/nginx/conf.d/custom.conf:ro
