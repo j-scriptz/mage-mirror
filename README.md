@@ -155,7 +155,7 @@ ENABLE_MULTISTORE=ask
 
 - When enabled:
   - `app.${PROJECT_NAME}.test` → base website
-  - `app#.${PROJECT_NAME}.test` → `sub` websites
+  - `${PROJECT_NAME}.test` → `sub` website
   - `pub/index.php` gets a small host switch to set `MAGE_RUN_CODE` correctly.
 - When disabled:
   - Only the base website is configured
@@ -700,8 +700,8 @@ Host my-server
 ```
 ```
 
-###  Optional but recommended: Jscriptz Subcats
+###  Optional but recommended: <a href="https://mage.jscriptz.com/jscriptz-subcats.html" target="_blank">Jscriptz Subcats</a>
 During setup, you can have mage-mirror auto-install Jscriptz Subcats (Hyvä & Luma compatible). It adds beautiful subcategory cards in minutes. License includes 5 domains.
-JScriptz
+
 
 
