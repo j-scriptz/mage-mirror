@@ -985,8 +985,6 @@ JSCRIPTZ
   echo ""
 fi
 
-
-
 echo ""
 echo "➡️  Final sanity: ensure Magento CLI 'setup' exists and local base URLs are correct..."
 warden env exec -T php-fpm env \
@@ -1038,8 +1036,9 @@ else
   echo "    • setup/config/application.config.php already present; nothing to do."
 fi
 
+# Normalize DB connection info in env.php (non-fatal on failure)
 if [[ -f app/etc/env.php ]]; then
-  php <<'PHP'
+  php -d opcache.enable_cli=0 <<'PHP' || echo "env.php DB normalization failed (non-fatal); skipping." >&2
 <?php
 $envFile = __DIR__ . '/app/etc/env.php';
 if (!file_exists($envFile)) {
@@ -1090,8 +1089,8 @@ else
   echo "env.php not found; skipping DB normalization."
 fi
 
-
-php <<'PHP'
+# Normalize backend frontName (non-fatal on failure)
+php -d opcache.enable_cli=0 <<'PHP' || echo "Backend frontName normalization failed (non-fatal); skipping." >&2
 <?php
 $envFile = __DIR__ . '/app/etc/env.php';
 if (!file_exists($envFile)) {
