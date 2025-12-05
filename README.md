@@ -1,3 +1,5 @@
+![mage-mirror quick demo](mage-mirror-quicker-clip-3to25-800w.gif)
+
 # Magento + Hyvä via Warden  
 **_mage-mirror.sh v1.0**
 
@@ -63,7 +65,8 @@ cd mage-mirror
 # 2) Configure (optional but recommended)
 # edit _mage-mirror.config to match your setup
 
-# 3) Make the installer executable
+# 3) Make the installer executable![mage-mirror-quicker-clip-3to25-800w](https://github.com/user-attachments/assets/b360a9f7-6641-402c-9fc5-fdb8ddc2ec1c)
+
 chmod +x _mage-mirror.sh
 
 # 4) Run it
@@ -302,7 +305,7 @@ You can override Traefik values by setting:
 # SUBCATS_URL=https://mage.test/
 ```
 
-in `_master.config` if needed.
+in `_mage-mirror.config` if needed.
 
 ---
 
@@ -362,7 +365,7 @@ PROJECT_NAME=mage USE_EXISTING_DB=yes EXISTING_DB_SQL=db/mage-multi-hyva.sql EXI
 PROJECT_NAME=mage USE_EXISTING_DB=yes USE_RSYNC_MAGENTO=yes USE_RSYNC_TAR_MAGENTO=yes USE_REMOTE_DB_DUMP=yes WITH_SAMPLE_DATA=no INSTALL_HYVA=yes ENABLE_MULTISTORE=yes UPGRADE_MAGENTO=yes UPGRADE_MAGENTO_VERSION=2.4.* ./_mage-mirror.sh
 ```
 
-(Assumes `_master.config` defines working `REMOTE_*` values.)
+(Assumes `_mage-mirror.config` defines working `REMOTE_*` values.)
 
 ---
 
