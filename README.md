@@ -332,14 +332,31 @@ If you see **“No alive nodes found in your cluster”**, this is the part that
 
 ---
 
-## Docker Desktop 4.29 / Warden note
+## Docker Desktop 29.0.1 / Warden note
 
-Docker Desktop **4.29** tightened container isolation and Docker socket access.  
+Docker Desktop **29** tightened container isolation and Docker socket access.  
 If your Warden setup suddenly starts misbehaving after upgrading Docker Desktop (e.g. permission errors, services not starting as expected):
 
-1. Try downgrading Docker Desktop to a pre-4.29 build (e.g. 4.28) known to work with your Warden version.
+1. Try downgrading Docker Desktop to a pre-29 build (e.g. 28) known to work with your Warden version.
 2. Or adjust Enhanced Container Isolation / socket mount settings if you’re on a plan that exposes them.
 3. Keep Warden relatively up-to-date to match Docker changes.
+
+On my macOS with Docker 29.0.1 under Settings > Docker Engine:
+
+<code>
+{
+  "builder": {
+    "gc": {
+      "defaultKeepStorage": "20GB",
+      "enabled": true
+    }
+  },
+  "experimental": false,
+  "min-api-version": "1.24"
+}
+</code>
+
+The key part was adding the "min-api-version"
 
 This script just shells out to `docker` / `warden` — if those tools are happy, the installer will be too.
 
@@ -682,4 +699,9 @@ Host my-server
 
 ```
 ```
+
+###  Optional but recommended: Jscriptz Subcats
+During setup, you can have mage-mirror auto-install Jscriptz Subcats (Hyvä & Luma compatible). It adds beautiful subcategory cards in minutes. License includes 5 domains.
+JScriptz
+
 
