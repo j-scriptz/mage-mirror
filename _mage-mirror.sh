@@ -1004,6 +1004,22 @@ set -e
 
 cd /var/www/html
 
+echo "  - Ensuring .user.ini and pub/.user.ini have memory_limit = 2G for web requests..."
+for f in ".user.ini" "pub/.user.ini"; do
+  if [ -f "$f" ]; then
+    # If memory_limit already exists, replace it; otherwise append it.
+    if grep -qE '^\s*memory_limit' "$f"; then
+      sed -i 's/^\s*memory_limit\s*=.*/memory_limit = 2G/' "$f"
+    else
+      echo "memory_limit = 2G" >> "$f"
+    fi
+    echo "    • Updated $f"
+  else
+    printf "memory_limit = 2G\n" > "$f"
+    echo "    • Created $f"
+  fi
+done
+
 echo "  - Checking for setup/config/application.config.php..."
 if [ ! -f setup/config/application.config.php ]; then
   echo "⚠️  setup/config/application.config.php missing; bootstrapping setup directory from a temporary composer project..."
@@ -1617,9 +1633,8 @@ echo "Storefront (Warden) : https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/"
 echo "Admin               : https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/${ADMIN_FRONTNAME}"
 echo ""
 echo "Notes:"
-echo "  • If you provide config/composer-auth.json, it is copied to auth.json and used by Composer."
+echo "  • If you provide your auth.json file (or edit auth.json.sample) it is used by Composer."
 echo "    Otherwise, configure Magento repo auth manually inside the container if needed:"
 echo "       composer global config http-basic.repo.magento.com <pub-key> <priv-key>"
 echo "  • /etc/hosts: this script adds ${TRAEFIK_DOMAIN} + ${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN};"
-echo "  • This script does NOT change Docker ports; it assumes Warden uses its defaults."
 echo ""
