@@ -21,8 +21,8 @@ Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-st
 
 ## 🎥 Quick Demo
 
-> Replace with your actual GIF/WebM  
-> `![mage-mirror demo](.github/assets/mage-mirror-demo.gif)`
+
+![mage-mirror demo](.github/assets/mage-mirror-demo.gif)
 
 ---
 
