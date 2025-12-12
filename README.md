@@ -54,7 +54,14 @@ Everything runs through:
 git clone https://github.com/j-scriptz/mage-mirror.git
 cd mage-mirror
 chmod +x _mage-mirror.sh
+```
+then
+```bash
 ./_mage-mirror.sh
+```
+or
+```aiignore
+sh _mage-mirror.sh
 ```
 
 Environment URLs:
