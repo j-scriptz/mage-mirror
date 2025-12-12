@@ -7,7 +7,7 @@ Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-st
 
 
  
-> ![mage-mirror header](.github/assets/mage-mirror-hero.svg)
+![mage-mirror header](.github/assets/mage-mirror-hero.svg)
 
 
 ## 🏷️ Badges
