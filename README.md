@@ -1,707 +1,194 @@
-![mage-mirror quick demo](mage-mirror-quicker-clip-3to25-800w.gif)
+# 🚀 mage-mirror
+### The Fastest Way to Spin Up Magento + Warden + Hyvä — On macOS & Linux
 
-# Magento + Hyvä via Warden  
-**_mage-mirror.sh v1.0**
+Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-store routing — all from one script.
 
-**local Magento 2 + Hyvä** dev stack in one command — with optional **remote clone**, **one-step core upgrade**, and **multi-store** routing.
-
-This repo ships a single, powerful installer:
-
-> `_mage-mirror.sh` – a guided setup script for macOS/linux + Docker + Warden.
-
-Repo: `j-scriptz/mage-mirror`
+**One command. Zero frustration.**
 
 ---
 
-## Highlights
-
-- 🧱 **Fresh Magento 2 install** via `composer create-project`
-- 🔁 **Clone an existing site** (code + DB) from:
-  - Local SQL dump + `env.php` / `config.php`, or
-  - A remote server via SSH (rsync + tar + remote `mysqldump`)
-- ⬆️ **Upgrade mode** (clone + upgrade):
-  - Imports your current code & DB
-  - Updates Magento core with Composer (e.g. to latest `2.4.x`)
-  - Runs `setup:upgrade`, DI compile, static deploy, reindex, etc.
-- 🎨 **Hyvä theme integration**:
-  - Optional install via OSS composer mirrors
-  - Automatically sets Hyvä Default as the storefront theme when available
-- 🌐 **Optional multi-store**:
-  - `https://<project>.test` → base website
-  - `https://app.<project>.test` → optional `sub` websites
-  - Host-based routing patch in `pub/index.php` (only when enabled)
-- 🧪 **Search & OpenSearch sanity**:
-  - Configures Magento to use `opensearch` (Warden’s service)
-  - Rebuilds `catalogsearch_fulltext` index
-- 🔐 **Remote sync with SSH keys _or_ interactive password fallback**:
-  - If `REMOTE_SSH_KEY` is set → uses key-based auth
-  - If not, and you’re in a TTY → falls back to password/agent-based SSH (ssh/rsync will prompt)
-  - In non-interactive runs, a key is still required
-- 🧾 Single, central config file: **`_mage-mirror.config`**
+## 🧼 Clean Overview Visual
+ 
+> `![mage-mirror header](.github/assets/mage-mirror-hero.svg)`
 
 ---
 
-## Prerequisites
+## 🏷️ Badges
 
-- **macOS** (Apple Silicon or Intel) or **Linux** or **Ubuntu / WSL2 on Windows**
-- **Docker Desktop for Mac or Docker on Linux**
-  - Docker Compose v2 enabled
-  - Enough resources (6GB+ RAM recommended)
-- **Homebrew** (optional; script can install it)
-- **Warden** (installed via Homebrew if missing)
-
-> If `docker info` fails, fix Docker Desktop first.  
-> The installer will exit early with a clear error if Docker/Warden aren’t ready.
+![GitHub stars](https://img.shields.io/github/stars/j-scriptz/mage-mirror?style=for-the-badge&color=blue)
+![GitHub forks](https://img.shields.io/github/forks/j-scriptz/mage-mirror?style=for-the-badge&color=brightgreen)
+![GitHub issues](https://img.shields.io/github/issues/j-scriptz/mage-mirror?style=for-the-badge&color=yellow)
+![GitHub license](https://img.shields.io/github/license/j-scriptz/mage-mirror?style=for-the-badge&color=orange)
 
 ---
 
-## Quick start
+## 🎥 Quick Demo
+
+> Replace with your actual GIF/WebM  
+> `![mage-mirror demo](.github/assets/mage-mirror-demo.gif)`
+
+---
+
+## 🌟 What is mage-mirror?
+
+mage-mirror is a high-speed Magento development environment generator built for Warden, Docker, and Hyvä.
+
+It automates:
+
+- Fresh Magento installs
+- Hyvä theme installation
+- Cloning local or remote sites
+- Magento upgrades
+- Multi-store routing
+- SSH sync via rsync or tar
+- OpenSearch reconfiguration
+- Full Warden environment setup
+
+Everything runs through:
+
+- `_mage-mirror.sh`
+- `_mage-mirror.config`
+
+---
+
+## 🏁 Quick Start
 
 ```bash
-# 1) Clone the project
 git clone https://github.com/j-scriptz/mage-mirror.git
 cd mage-mirror
-
-# 2) Configure (optional but recommended)
-# edit _mage-mirror.config to match your setup
-
-# 3) Make the installer executable![mage-mirror-quicker-clip-3to25-800w](https://github.com/user-attachments/assets/b360a9f7-6641-402c-9fc5-fdb8ddc2ec1c)
-
 chmod +x _mage-mirror.sh
-
-# 4) Run it
 ./_mage-mirror.sh
 ```
 
-The script will:
+Environment URLs:
 
-1. Load `_mage-mirror.config` (if present)
-2. Ask for anything left as `ask`
-3. Spin up a full **Magento + Hyvä + OpenSearch** Warden environment
+- https://mage.test  
+- https://app.mage.test (if multi-store enabled)
 
 ---
 
-## Central configuration: `_mage-mirror.config`
+## 🚀 Key Features
 
-Instead of multiple env files, everything is driven from one optional config:
+### ⚡ Fresh Magento Installs
+- Composer create-project  
+- Admin creation  
+- Hyvä auto-install  
+- Sample data support  
+- DI compile + static deploy  
+- OpenSearch configuration  
 
-```bash
-CONFIG_FILE="${CONFIG_FILE:-_mage-mirror.config}"
-if [[ -f "${CONFIG_FILE}" ]]; then
-  echo "ℹ️  Loading configuration from ${CONFIG_FILE}..."
-  # shellcheck disable=SC1090
-  source "${CONFIG_FILE}"
-fi
-```
+---
 
-You control everything via simple key/value pairs.
+### 🔁 Clone Magento Sites
+Supports:
 
-### Core settings
+- Local SQL + env.php/config.php
+- Remote over SSH
+- Remote DB via mysqldump
+- Remote rsync/tar sync modes
 
-```bash
-# Name of the Warden env / project (warden env-init <PROJECT_NAME> magento2)
-PROJECT_NAME=mage
+Modes:
 
-# Magento metapackage & version (fresh install + upgrade target)
-MAGENTO_PACKAGE=magento/project-community-edition
-# Use a Composer version constraint; 2.4.* resolves to the newest 2.4.x
-MAGENTO_VERSION=2.4.*
+- Code only  
+- DB only  
+- Code + DB  
+- Code + DB (no media)  
+- Full sync  
 
-# Admin frontname for Magento backend
-ADMIN_FRONTNAME=mage_admin
-```
+---
 
-### Install mode: fresh vs existing DB
-
-```bash
-# Use an existing DB + env.php/config.php instead of setup:install
-#   yes  = always use existing DB (non-interactive)
-#   no   = always run fresh install
-#   ask  = prompt at runtime
-USE_EXISTING_DB=ask
-
-# When USE_EXISTING_DB=yes and NOT using remote DB dump,
-# point to local files (relative to repo root):
-EXISTING_DB_SQL=db/mage-multi-hyva.sql
-EXISTING_ENV_PHP=config/env.php
-EXISTING_CONFIG_PHP=config/config.php
-```
-
-### Sample data & Hyvä
+### ⬆️ Magento Upgrade Mode
 
 ```bash
-# WITH_SAMPLE_DATA:
-#   yes  = always install sample data on fresh installs
-#   no   = never install
-#   ask  = prompt at runtime
-WITH_SAMPLE_DATA=ask
-
-# INSTALL_HYVA:
-#   yes  = install Hyvä theme from OSS repos and set as default
-#   no   = skip Hyvä install
-#   ask  = prompt at runtime
-INSTALL_HYVA=ask
-```
-
-### Multi-store toggle
-
-```bash
-# ENABLE_MULTISTORE:
-#   yes  = configure app.${PROJECT_NAME}.test + ${PROJECT_NAME}.test with a secondary 'subcats' website
-#   no   = single-store only (no sub websites or host-based routing)
-#   ask  = prompt at runtime
-ENABLE_MULTISTORE=ask
-```
-
-- When enabled:
-  - `app.${PROJECT_NAME}.test` → base website
-  - `${PROJECT_NAME}.test` → `sub` website
-  - `pub/index.php` gets a small host switch to set `MAGE_RUN_CODE` correctly.
-- When disabled:
-  - Only the base website is configured
-  - No host-based routing or sub URLs are applied
-
-### Upgrade mode (clone + upgrade)
-
-```bash
-# UPGRADE_MAGENTO:
-#   yes  = after importing existing code/DB, attempt composer-based Magento core upgrade
-#   no   = skip upgrade and keep current version
-#   ask  = prompt at runtime in existing-DB path
-UPGRADE_MAGENTO=ask
-
-# UPGRADE_MAGENTO_VERSION:
-#   Target core version for upgrade. If empty, MAGENTO_VERSION is used.
-#   Example: 2.4.* (newest 2.4.x), or a specific release like 2.4.7
+UPGRADE_MAGENTO=yes
 UPGRADE_MAGENTO_VERSION=2.4.*
 ```
 
-How it works (existing DB path):
+mage-mirror will:
 
-1. After code/DB import and env/config wiring, the script asks (if `ask`).
-2. If enabled:
-   - Figures out a target version:
-     ```bash
-     TARGET_VER="${UPGRADE_MAGENTO_VERSION:-${MAGENTO_VERSION:-2.4.*}}"
-     ```
-   - Updates the Magento core package constraint in `composer.json`:
-     - `magento/product-community-edition:${TARGET_VER}` **or**
-     - `magento/magento2-base:${TARGET_VER}`
-   - Runs:
-     ```bash
-     composer update "magento/*" --with-all-dependencies
-     ```
-   - Then runs:
-     ```bash
-     bin/magento setup:upgrade
-     bin/magento setup:di:compile
-     bin/magento setup:static-content:deploy -f
-     bin/magento cache:flush
-     ```
-
-Result: your cloned site is moved forward to the version you specify while keeping `app/code` and `app/design` modules.
+1. Import site  
+2. Adjust Composer constraints  
+3. Run composer update  
+4. Run setup:upgrade  
+5. Build static assets  
 
 ---
 
-## Remote sync (rsync / tar over SSH)
+### 🌐 Multi-Store Routing
 
-When `USE_EXISTING_DB=yes`, you can optionally pull code/DB from an existing remote instance.
+| Domain        | Website |
+|---------------|---------|
+| app.mage.test | base    |
+| mage.test     | subcats |
 
-Key flags:
+Also:
+
+- Writes to `/etc/hosts`
+- Patches pub/index.php
+- Sets base URLs
+
+---
+
+## ⚙ Configuration: `_mage-mirror.config`
+
+Example:
 
 ```bash
-# Use remote Magento code instead of composer create-project
-#   yes  = always rsync from remote
-#   no   = never rsync; always use composer locally
-#   ask  = prompt at runtime if REMOTE_* is configured
+PROJECT_NAME=mage
+MAGENTO_VERSION=2.4.*
+INSTALL_HYVA=ask
+WITH_SAMPLE_DATA=ask
+USE_EXISTING_DB=ask
 USE_RSYNC_MAGENTO=ask
-
-# How to combine rsync/tar + remote DB when using remote Magento:
-#   ask       = prompt with menu (recommended)
-#   (others are set internally by the script: everything | code_only | db_code | db_only)
-USE_RSYNC_TAR_MAGENTO=ask
-
-# Whether to pull the DB via remote mysqldump over SSH:
-#   yes  = run mysqldump on remote host and pipe into warden db import
-#   no   = use local SQL file (EXISTING_DB_SQL)
 USE_REMOTE_DB_DUMP=no
-
-# If you want to exclude pub/media from the tarball when copying code:
-#   yes  = exclude pub/media (smaller tar, no media sync)
-#   no   = include pub/media
-EXCLUDE_MEDIA_FROM_TAR=no
+ENABLE_MULTISTORE=ask
+UPGRADE_MAGENTO=ask
+UPGRADE_MAGENTO_VERSION=2.4.*
 ```
 
-Remote host/SSH:
-
-```bash
-# Where the remote Magento instance lives
-REMOTE_HOST=your.server.com
-REMOTE_USER=sshuser
-REMOTE_PATH=/var/www/html/magento
-
-# Path to your PRIVATE SSH key on the host running this script
-# If unset or invalid, the script will:
-#   - In interactive runs: fall back to password/agent-based SSH
-#   - In non-interactive runs: exit with an error
-REMOTE_SSH_KEY=/Users/yourname/.ssh/id_ed25519
-
-# Remote DB settings (used when USE_REMOTE_DB_DUMP=yes)
-REMOTE_DB_HOST=127.0.0.1
-REMOTE_DB_NAME=magento
-REMOTE_DB_USER=magento
-REMOTE_DB_PASSWORD=secret
-REMOTE_DB_PORT=3306
-```
-
-When rsync is enabled:
-
-- If `REMOTE_SSH_KEY` exists:
-  - The key is copied into the php-fpm container and used for all SSH/rsync calls.
-- If `REMOTE_SSH_KEY` is missing/invalid:
-  - If a TTY is attached, the script warns and falls back to **password/agent-based SSH**.  
-    Expect `ssh` / `rsync` to prompt you.
-  - If no TTY (CI/headless), the script exits and tells you to configure `REMOTE_SSH_KEY`.
-
-The script supports four remote copy modes (chosen from an interactive menu when `USE_RSYNC_TAR_MAGENTO=ask`):
-
-1. **Everything** → code + `pub/media` + remote DB
-2. **Code only** → code (no media), DB from local SQL
-3. **DB + Code only** → code (no media) + remote DB via `mysqldump`
-4. **DB only** → DB via `mysqldump`, code via composer
+Supports: yes, no, ask
 
 ---
 
-## Multi-store URLs & hostnames
-
-By default:
-
-- `PROJECT_NAME=mage` → base domain `mage.test`, subdomain `app`
-- The script updates `/etc/hosts` with:
-  ```text
-  127.0.0.1 mage.test app.mage.test
-  ```
-
-When `ENABLE_MULTISTORE=yes`:
-
-- Magento base URLs are configured so that:
-  - Default scope & website `base` → `https://app.mage.test/`
-  - Website `subcats` → `https://mage.test/`
-- `pub/index.php` is patched to route:
-  - `app.mage.test` → website code `base`
-  - `mage.test` → website code `subcats`
-  - Anything else → `base`
-
-When `ENABLE_MULTISTORE=no`:
-
-- Only the base website is configured
-- No `subcats` base URLs or host-based routing are applied
-
-You can override Traefik values by setting:
-
-```bash
-# TRAEFIK_DOMAIN=mage.test
-# TRAEFIK_SUBDOMAIN=app
-# SUBCATS_URL=https://mage.test/
-```
-
-in `_mage-mirror.config` if needed.
-
----
-
-## OpenSearch & search sanity
-
-For both fresh installs and existing DB imports, the script standardizes on **OpenSearch**:
-
-- Fresh installs use `--search-engine=opensearch` with the right flags on `setup:install`.
-- Existing DB path:
-  - Waits for `opensearch:9200`
-  - Forces:
-
-    ```bash
-    bin/magento config:set catalog/search/engine opensearch
-    bin/magento config:set catalog/search/opensearch_server_hostname opensearch
-    bin/magento config:set catalog/search/opensearch_server_port 9200
-    bin/magento config:set catalog/search/opensearch_index_prefix magento2
-    bin/magento config:set catalog/search/opensearch_enable_auth 0
-    ```
-
-  - Rebuilds `catalogsearch_fulltext`
-
-If you see **“No alive nodes found in your cluster”**, this is the part that rewires Magento back to Warden’s OpenSearch instance.
-
----
-
-## Docker Desktop 29.0.1 / Warden note
-
-Docker Desktop **29** tightened container isolation and Docker socket access.  
-If your Warden setup suddenly starts misbehaving after upgrading Docker Desktop (e.g. permission errors, services not starting as expected):
-
-1. Try downgrading Docker Desktop to a pre-29 build (e.g. 28) known to work with your Warden version.
-2. Or adjust Enhanced Container Isolation / socket mount settings if you’re on a plan that exposes them.
-3. Keep Warden relatively up-to-date to match Docker changes.
-
-On my macOS with Docker 29.0.1 under Settings > Docker Engine:
-
-<code>
-{
-  "builder": {
-    "gc": {
-      "defaultKeepStorage": "20GB",
-      "enabled": true
-    }
-  },
-  "experimental": false,
-  "min-api-version": "1.24"
-}
-</code>
-
-The key part was adding the "min-api-version"
-
-This script just shells out to `docker` / `warden` — if those tools are happy, the installer will be too.
-
----
-
-## Example one-liners
+## 🧪 Example Commands
 
 ### Fresh install (Hyvä + sample data)
 
 ```bash
-PROJECT_NAME=mage USE_EXISTING_DB=no WITH_SAMPLE_DATA=yes INSTALL_HYVA=yes ENABLE_MULTISTORE=no ./_mage-mirror.sh
+PROJECT_NAME=mage USE_EXISTING_DB=no WITH_SAMPLE_DATA=yes INSTALL_HYVA=yes ./_mage-mirror.sh
 ```
 
-### Clone existing site from local dump (no upgrade, single-store)
+### Clone from local dump
 
 ```bash
-PROJECT_NAME=mage USE_EXISTING_DB=yes EXISTING_DB_SQL=db/mage-multi-hyva.sql EXISTING_ENV_PHP=config/env.php EXISTING_CONFIG_PHP=config/config.php WITH_SAMPLE_DATA=no INSTALL_HYVA=no ENABLE_MULTISTORE=no UPGRADE_MAGENTO=no ./_mage-mirror.sh
+PROJECT_NAME=mage USE_EXISTING_DB=yes EXISTING_DB_SQL=db/site.sql EXISTING_ENV_PHP=config/env.php ./_mage-mirror.sh
 ```
 
-### Clone from remote + upgrade to newest 2.4.x + multi-store
+### Clone remote + upgrade
 
 ```bash
-PROJECT_NAME=mage USE_EXISTING_DB=yes USE_RSYNC_MAGENTO=yes USE_RSYNC_TAR_MAGENTO=yes USE_REMOTE_DB_DUMP=yes WITH_SAMPLE_DATA=no INSTALL_HYVA=yes ENABLE_MULTISTORE=yes UPGRADE_MAGENTO=yes UPGRADE_MAGENTO_VERSION=2.4.* ./_mage-mirror.sh
-```
-
-(Assumes `_mage-mirror.config` defines working `REMOTE_*` values.)
-
----
-
-## TL;DR
-
-- One script: **`_mage-mirror.sh`**
-- One config: **`_mage-mirror.config`**
-- Three core modes:
-  1. Fresh install (Magento + Hyvä)
-  2. Clone existing site (code + DB)
-  3. Clone **and** upgrade to a newer Magento version
-
-Perfect for quickly spinning up **mirror environments**, rehearsal upgrades, or portfolio-ready Hyvä stores on macOS with Warden.
-
-````markdown
-# SSH Key Setup Guide
-
-This guide walks you through:
-
-1. Generating an SSH key on your **local machine**
-2. Adding the public key to **your server** for passwordless login
-3. (Optional) Configuring a convenient `~/.ssh/config` alias
-
-Examples assume macOS / Linux. Windows notes are at the bottom.
-
----
-
-## 1. SSH Key Basics
-
-You will create an SSH **key pair**:
-
-- **Private key** – stays on your local machine (e.g. `~/.ssh/id_ed25519`)  
-  > Never copy this to any server or share it.
-
-- **Public key** – safe to share (e.g. `~/.ssh/id_ed25519.pub`)  
-  > This goes into `~/.ssh/authorized_keys` on your server.
-
-SSH uses the private key locally to prove your identity; the server only needs the public key.
-
----
-
-## 2. Check for Existing Keys
-
-On your **local machine** (macOS / Linux / WSL):
-
-```bash
-ls -al ~/.ssh
-````
-
-If you see any of the following, you may already have keys:
-
-* `id_ed25519` / `id_ed25519.pub`
-* `id_rsa` / `id_rsa.pub`
-
-You can reuse those if you like.
-If you want a fresh key just for this setup, continue to the next step.
-
----
-
-## 3. Generate a New SSH Key Pair
-
-On your **local machine**:
-
-```bash
-ssh-keygen -t ed25519 -C "your_email@example.com"
-```
-
-You’ll be prompted:
-
-1. **Enter file in which to save the key**
-
-   * Press **Enter** to accept the default: `~/.ssh/id_ed25519`
-
-2. **Enter passphrase (empty for no passphrase)**
-
-   * For more security, set a passphrase (recommended for your main dev machine).
-   * For fully non-interactive scripts, you may leave this empty (less secure).
-
-This will create:
-
-* `~/.ssh/id_ed25519` – private key
-* `~/.ssh/id_ed25519.pub` – public key
-
----
-
-## 4. Add the Key to the SSH Agent (Optional but Recommended)
-
-This lets your OS cache the decrypted key, so you don’t have to re-enter the passphrase constantly.
-
-### macOS / Linux / WSL
-
-```bash
-eval "$(ssh-agent -s)"
-ssh-add ~/.ssh/id_ed25519
-```
-
-> Note: On macOS, you can add this to your shell profile later for automatic agent setup.
-
----
-
-## 5. Copy the Public Key to the Server
-
-We’ll use the following placeholders:
-
-* **Server user:** `YOUR_USER`
-* **Server host:** `your.server.com`
-
-Replace both with your real values.
-
-### Option A: Using `ssh-copy-id` (Easiest)
-
-On your **local machine**:
-
-```bash
-ssh-copy-id -i ~/.ssh/id_ed25519.pub YOUR_USER@your.server.com
-```
-
-You’ll be prompted for your **server password** one last time.
-
-`ssh-copy-id` will:
-
-* Create `~/.ssh` on the server if it doesn’t exist
-* Append your key to `~/.ssh/authorized_keys`
-* Set correct file permissions automatically
-
-If `ssh-copy-id` is not available, use Option B.
-
----
-
-### Option B: Manual Copy
-
-1. **Print your public key** locally:
-
-   ```bash
-   cat ~/.ssh/id_ed25519.pub
-   ```
-
-   Copy the entire line to your clipboard.
-
-2. **SSH into the server** using your password:
-
-   ```bash
-   ssh YOUR_USER@your.server.com
-   ```
-
-3. On the **server**, create the `.ssh` directory if needed:
-
-   ```bash
-   mkdir -p ~/.ssh
-   chmod 700 ~/.ssh
-   ```
-
-4. Open (or create) `authorized_keys` on the server:
-
-   ```bash
-   nano ~/.ssh/authorized_keys
-   # or use vim, etc.
-   ```
-
-   Paste the public key line you copied earlier, then save and exit.
-
-5. Fix permissions on the server:
-
-   ```bash
-   chmod 600 ~/.ssh/authorized_keys
-   ```
-
-6. Exit the server:
-
-   ```bash
-   exit
-   ```
-
----
-
-## 6. Test the SSH Key Login
-
-Back on your **local machine**:
-
-```bash
-ssh YOUR_USER@your.server.com
-```
-
-Expected behavior:
-
-* You should **not** be asked for the server’s password.
-* If you set a passphrase on the key, you may be asked for that (once per session if using `ssh-agent`).
-
-If you are still prompted for the server password, check:
-
-* Correct username (`YOUR_USER` vs `root`, etc.)
-* Public key is actually present in `~/.ssh/authorized_keys` on the server
-* File permissions on the server side:
-
-  * `~/.ssh` → `700`
-  * `~/.ssh/authorized_keys` → `600`
-* SSH configuration on the server (`/etc/ssh/sshd_config`) allows key authentication:
-
-  * `PubkeyAuthentication yes`
-  * `AuthorizedKeysFile .ssh/authorized_keys`
-
-> If you change `sshd_config`, remember to restart the SSH service (e.g., `sudo systemctl restart sshd`).
-
----
-
-## 7. (Optional) Add a Host Alias in `~/.ssh/config`
-
-This lets you use a short alias (`ssh webetta`) instead of typing the full user + host each time and lets you pin a specific key.
-
-On your **local machine**:
-
-```bash
-nano ~/.ssh/config
-```
-
-Add:
-
-```sshconfig
-Host my-server
-    HostName your.server.com
-    User YOUR_USER
-    Port 22
-    IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-```
-
-Now you can connect with:
-
-```bash
-ssh my-server
+PROJECT_NAME=mage USE_EXISTING_DB=yes USE_RSYNC_MAGENTO=yes USE_REMOTE_DB_DUMP=yes UPGRADE_MAGENTO=yes UPGRADE_MAGENTO_VERSION=2.4.* ./_mage-mirror.sh
 ```
 
 ---
 
-## 8. Windows Notes
+## ❤️ Optional: Jscriptz Subcats
 
-You can follow this guide on Windows in two main ways:
-
-### Option 1: WSL (Recommended)
-
-If you’re using **Windows Subsystem for Linux (WSL)**:
-
-* Open your WSL terminal (Ubuntu, etc.)
-* Follow the **Linux** instructions exactly
-* Keys are stored in: `/home/<your-username>/.ssh`
-
-### Option 2: Native Windows OpenSSH (PowerShell)
-
-From **PowerShell**:
-
-```powershell
-ssh-keygen -t ed25519 -C "your_email@example.com"
-```
-
-By default, keys are stored in:
-
-```text
-C:\Users\<YourUser>\.ssh\id_ed25519
-C:\Users\<YourUser>\.ssh\id_ed25519.pub
-```
-
-You can then:
-
-* Use `type $env:USERPROFILE\.ssh\id_ed25519.pub` to print the public key
-* Copy it into `~/.ssh/authorized_keys` on the server using the same **manual copy** process as above
+Hyvä + Luma compatible subcategory card module:  
+https://mage.jscriptz.com/jscriptz-subcats.html
 
 ---
 
-## 9. Quick Reference
+## 🤝 Contributing
 
-### Generate key (local):
+PRs and feature requests welcome.
 
-```bash
-ssh-keygen -t ed25519 -C "your_email@example.com"
-```
+If mage-mirror saved you time:
 
-### Start agent + add key:
+**⭐ Please star the repo — it helps visibility!**
 
-```bash
-eval "$(ssh-agent -s)"
-ssh-add ~/.ssh/id_ed25519
-```
+---
 
-### Copy key (if `ssh-copy-id` available):
+## 📄 License
 
-```bash
-ssh-copy-id -i ~/.ssh/id_ed25519.pub YOUR_USER@your.server.com
-```
-
-### Manual server-side setup:
-
-```bash
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-nano ~/.ssh/authorized_keys  # paste key, save
-chmod 600 ~/.ssh/authorized_keys
-```
-
-### Test:
-
-```bash
-ssh YOUR_USER@your.server.com
-```
-
-### Optional `~/.ssh/config` entry:
-
-```sshconfig
-Host my-server
-    HostName your.server.com
-    User YOUR_USER
-    IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-```
-
-```
-```
-
-###  Optional but recommended: <a href="https://mage.jscriptz.com/jscriptz-subcats.html" target="_blank">Jscriptz Subcats</a>
-During setup, you can have mage-mirror auto-install Jscriptz Subcats (Hyvä & Luma compatible). It adds beautiful subcategory cards in minutes. License includes 5 domains.
-
-
-
+MIT License  
