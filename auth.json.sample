@@ -3,6 +3,10 @@
         "repo.magento.com": {
             "username": "<public-key>",
             "password": "<private-key>"
-        }
+        },
+       "hyva-themes.repo.packagist.com": {
+         "username": "token",
+         "password": "example_7dd65b4f3ddad9afd4b0a"
+       }
     }
 }
