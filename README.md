@@ -9,7 +9,7 @@ Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-st
 
 ## 🧼 Clean Overview Visual
  
-> `![mage-mirror header](.github/assets/mage-mirror-hero.svg)`
+> ![mage-mirror header](.github/assets/mage-mirror-hero.svg)
 
 ---
 
