@@ -5,13 +5,10 @@ Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-st
 
 **One command. Zero frustration.**
 
----
 
-## 🧼 Clean Overview Visual
  
 > ![mage-mirror header](.github/assets/mage-mirror-hero.svg)
 
----
 
 ## 🏷️ Badges
 
