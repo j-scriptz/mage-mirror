@@ -188,4 +188,4 @@ If mage-mirror saved you time:
 
 ## 📄 License
 
-MIT License  
+GNU Public License v3.0
