@@ -125,82 +125,6 @@ if [[ "${PLATFORM_OS}" == "other" ]]; then
   echo "⚠️  This script is tuned for macOS and Linux. You're on ${OS_NAME}."
 fi
 
-### ---- Mutagen & Docker-sock compatibility (auto) ----
-# Warden can optionally use Mutagen for file sync (often helpful on macOS; usually unnecessary on Linux).
-# This installer keeps Mutagen *optional* and auto-detects sensible defaults.
-#
-# Controls (environment variables or _mage-mirror.config):
-#   MUTAGEN_MODE: auto | enable | disable
-#     - auto    : disable on Linux, enable on macOS if mutagen exists and Warden config allows
-#     - enable  : attempt to enable (falls back to disable if mutagen missing or config disallows)
-#     - disable : force disable
-#
-# Also: if WARDEN_DOCKER_SOCK is unset, default to /var/run/docker.sock when present.
-
-MUTAGEN_MODE="${MUTAGEN_MODE:-auto}"
-
-# Default docker sock path if not explicitly set.
-if [[ -z "${WARDEN_DOCKER_SOCK:-}" && -S /var/run/docker.sock ]]; then
-  export WARDEN_DOCKER_SOCK="/var/run/docker.sock"
-fi
-
-# Detect Warden's mutagen setting from user config, if available.
-WARDEN_CONFIG_FILE="${WARDEN_CONFIG_FILE:-$HOME/.warden/config.yml}"
-WARDEN_MUTAGEN_ALLOWED="unknown"  # true|false|unknown
-if [[ -f "${WARDEN_CONFIG_FILE}" ]]; then
-  if grep -Eq '^[[:space:]]*mutagen:[[:space:]]*true[[:space:]]*$' "${WARDEN_CONFIG_FILE}"; then
-    WARDEN_MUTAGEN_ALLOWED="true"
-  elif grep -Eq '^[[:space:]]*mutagen:[[:space:]]*false[[:space:]]*$' "${WARDEN_CONFIG_FILE}"; then
-    WARDEN_MUTAGEN_ALLOWED="false"
-  fi
-fi
-
-HAS_MUTAGEN_BIN="no"
-if command -v mutagen >/dev/null 2>&1; then
-  HAS_MUTAGEN_BIN="yes"
-fi
-
-# Decide whether to disable mutagen for this run.
-DISABLE_MUTAGEN_FOR_RUN="no"
-
-case "${MUTAGEN_MODE}" in
-  disable)
-    DISABLE_MUTAGEN_FOR_RUN="yes"
-    ;;
-  enable)
-    # Only enable if the binary exists and Warden config does not explicitly disable.
-    if [[ "${HAS_MUTAGEN_BIN}" != "yes" ]]; then
-      echo "⚠️  MUTAGEN_MODE=enable but mutagen binary is not installed; continuing with Mutagen disabled."
-      DISABLE_MUTAGEN_FOR_RUN="yes"
-    elif [[ "${WARDEN_MUTAGEN_ALLOWED}" == "false" ]]; then
-      echo "⚠️  MUTAGEN_MODE=enable but ${WARDEN_CONFIG_FILE} has mutagen: false; continuing with Mutagen disabled."
-      DISABLE_MUTAGEN_FOR_RUN="yes"
-    fi
-    ;;
-  auto|*)
-    # Auto: disable by default on Linux; enable on macOS if available & not disallowed.
-    if [[ "${PLATFORM_OS}" == "linux" ]]; then
-      DISABLE_MUTAGEN_FOR_RUN="yes"
-    else
-      if [[ "${HAS_MUTAGEN_BIN}" != "yes" ]]; then
-        DISABLE_MUTAGEN_FOR_RUN="yes"
-      elif [[ "${WARDEN_MUTAGEN_ALLOWED}" == "false" ]]; then
-        DISABLE_MUTAGEN_FOR_RUN="yes"
-      fi
-    fi
-    ;;
-esac
-
-if [[ "${DISABLE_MUTAGEN_FOR_RUN}" == "yes" ]]; then
-  # These are safe no-ops if your Warden version doesn't use them,
-  # but prevent hard failures in versions that try to invoke mutagen.
-  export WARDEN_SYNC="0"
-  export WARDEN_MUTAGEN="0"
-  echo "ℹ️  Mutagen: disabled for this run (MUTAGEN_MODE=${MUTAGEN_MODE}, OS=${PLATFORM_OS}, mutagen_bin=${HAS_MUTAGEN_BIN}, warden_config_mutagen=${WARDEN_MUTAGEN_ALLOWED})."
-else
-  echo "ℹ️  Mutagen: enabled (MUTAGEN_MODE=${MUTAGEN_MODE}, mutagen_bin=${HAS_MUTAGEN_BIN}, warden_config_mutagen=${WARDEN_MUTAGEN_ALLOWED})."
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
   echo "❌ Docker not found. Install Docker (Docker Desktop on macOS, Docker Engine on Linux) and rerun."
   exit 1
@@ -1092,11 +1016,27 @@ fi
 
 if [[ "${INSTALL_JSCRIPTZ}" == "yes" ]]; then
   echo "➡️  Installing Jscriptz Subcats extension"
-  warden env exec -T php-fpm bash <<'JSCRIPTZ'
+  warden env exec -T php-fpm env \
+    HYVA_REPO="${HYVA_REPO:-}" \
+    HYVA_TOKEN="${HYVA_TOKEN:-}" \
+    bash <<'JSCRIPTZ'
 set -e
 cd /var/www/html
+
+# If this Magento project has Hyvä configured via private Packagist, Composer will
+# attempt to fetch packages.json during *any* require/update. In non-interactive
+# runs (like this script), that causes failures unless auth is pre-configured.
+if [ -n "${HYVA_REPO:-}" ] && [ -n "${HYVA_TOKEN:-}" ]; then
+  echo "  - Pre-configuring Hyvä private Packagist auth for non-interactive Composer..."
+  # Provide credentials via env to avoid interactive prompts. (Token is the username per Hyvä docs.)
+  export COMPOSER_AUTH="$(printf '{"http-basic":{"hyva-themes.repo.packagist.com":{"username":"token","password":"%s"}}}' "${HYVA_TOKEN}")"
+  # Ensure the repository URL matches your licensed organization/project.
+  composer config repositories.private-packagist composer "${HYVA_REPO}" || true
+fi
+
 composer require jscriptz/module-subcats:^2.1
 bin/magento module:enable Jscriptz_Subcats || true
+
 JSCRIPTZ
 
   echo "✅ jscriptz/module-subcats installed."
