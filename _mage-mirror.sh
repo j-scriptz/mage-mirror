@@ -121,6 +121,33 @@ case "${OS_NAME}" in
     ;;
 esac
 
+# ---- Warden compatibility knobs ----
+# Fix: docker-compose may reference ${WARDEN_DOCKER_SOCK} for socket mounts; if it's empty you'll get
+# "invalid spec: :/var/run/docker.sock: empty section between colons".
+if [[ -z "${WARDEN_DOCKER_SOCK:-}" ]]; then
+  for _sock in "/var/run/docker.sock" "${XDG_RUNTIME_DIR:-}/docker.sock" "/run/user/${UID}/docker.sock" "${HOME}/.docker/run/docker.sock"; do
+    if [[ -n "${_sock}" && -S "${_sock}" ]]; then
+      export WARDEN_DOCKER_SOCK="${_sock}"
+      break
+    fi
+  done
+fi
+if [[ -z "${WARDEN_DOCKER_SOCK:-}" ]]; then
+  echo "❌ Could not locate a docker.sock. Set WARDEN_DOCKER_SOCK to your Docker socket path and re-run." >&2
+  exit 1
+fi
+
+# Mutagen is only required on macOS for environments leveraging sync sessions.
+# Make it optional: disable if missing, and default-disable on Linux.
+if [[ "${PLATFORM_OS}" == "linux" ]]; then
+  export WARDEN_MUTAGEN_ENABLE="${WARDEN_MUTAGEN_ENABLE:-0}"
+else
+  if ! command -v mutagen >/dev/null 2>&1; then
+    export WARDEN_MUTAGEN_ENABLE="${WARDEN_MUTAGEN_ENABLE:-0}"
+  fi
+fi
+
+
 if [[ "${PLATFORM_OS}" == "other" ]]; then
   echo "⚠️  This script is tuned for macOS and Linux. You're on ${OS_NAME}."
 fi
@@ -1023,20 +1050,16 @@ if [[ "${INSTALL_JSCRIPTZ}" == "yes" ]]; then
 set -e
 cd /var/www/html
 
-# If this Magento project has Hyvä configured via private Packagist, Composer will
-# attempt to fetch packages.json during *any* require/update. In non-interactive
-# runs (like this script), that causes failures unless auth is pre-configured.
-if [ -n "${HYVA_REPO:-}" ] && [ -n "${HYVA_TOKEN:-}" ]; then
-  echo "  - Pre-configuring Hyvä private Packagist auth for non-interactive Composer..."
-  # Provide credentials via env to avoid interactive prompts. (Token is the username per Hyvä docs.)
-  export COMPOSER_AUTH="$(printf '{"http-basic":{"hyva-themes.repo.packagist.com":{"username":"token","password":"%s"}}}' "${HYVA_TOKEN}")"
-  # Ensure the repository URL matches your licensed organization/project.
-  composer config repositories.private-packagist composer "${HYVA_REPO}" || true
+# Avoid injecting the Hyvä *repository* here.
+# If a Hyvä key is available, we store auth in the project's auth.json so Composer
+# can run non-interactively later (without affecting non-Hyvä operations like sample data).
+if [ -n "${HYVA_TOKEN:-}" ]; then
+  echo "  - Configuring Hyvä auth (project auth.json) for non-interactive Composer..."
+  composer config --auth http-basic.hyva-themes.repo.packagist.com token "${HYVA_TOKEN}" >/dev/null 2>&1 || true
 fi
 
 composer require jscriptz/module-subcats:^2.1
 bin/magento module:enable Jscriptz_Subcats || true
-
 JSCRIPTZ
 
   echo "✅ jscriptz/module-subcats installed."
