@@ -69,6 +69,32 @@ DISABLE_FULLPAGE_CACHE="${DISABLE_FULLPAGE_CACHE:-true}"
 # Custom admin route
 ADMIN_FRONTNAME="${ADMIN_FRONTNAME:-mage_admin}"
 
+# Auto-select a PHP version compatible with the requested Magento version.
+# You can still override this via MAGENTO_PHP_VERSION in _mage-mirror.config.
+MAGENTO_PHP_VERSION="${MAGENTO_PHP_VERSION:-}"
+
+if [[ -z "${MAGENTO_PHP_VERSION}" ]]; then
+  case "${MAGENTO_VERSION}" in
+    # Early 2.4.x (and 2.3) – 7.4 only
+    2.3.*|2.3.[0-9]*|2.4.0*|2.4.1*|2.4.2*|2.4.3*)
+      MAGENTO_PHP_VERSION="7.4"
+      ;;
+    # 2.4.4–2.4.6 (and their -pX patches) – 8.1
+    2.4.4*|2.4.5*|2.4.6*)
+      MAGENTO_PHP_VERSION="8.1"
+      ;;
+    # 2.4.7+ – usually 8.2+ (be conservative with 8.2)
+    2.4.7*|2.4.8*|2.4.9*)
+      MAGENTO_PHP_VERSION="8.2"
+      ;;
+    # Fallback: latest PHP in Warden
+    *)
+      MAGENTO_PHP_VERSION="8.3"
+      ;;
+  esac
+fi
+
+echo "➡️  Magento ${MAGENTO_VERSION} → PHP ${MAGENTO_PHP_VERSION}"
 
 echo "=========================================="
 echo " Magento 2 + Hyvä via Warden (macOS / Linux / Windows WSL2/Ubuntu)"
@@ -97,6 +123,82 @@ esac
 
 if [[ "${PLATFORM_OS}" == "other" ]]; then
   echo "⚠️  This script is tuned for macOS and Linux. You're on ${OS_NAME}."
+fi
+
+### ---- Mutagen & Docker-sock compatibility (auto) ----
+# Warden can optionally use Mutagen for file sync (often helpful on macOS; usually unnecessary on Linux).
+# This installer keeps Mutagen *optional* and auto-detects sensible defaults.
+#
+# Controls (environment variables or _mage-mirror.config):
+#   MUTAGEN_MODE: auto | enable | disable
+#     - auto    : disable on Linux, enable on macOS if mutagen exists and Warden config allows
+#     - enable  : attempt to enable (falls back to disable if mutagen missing or config disallows)
+#     - disable : force disable
+#
+# Also: if WARDEN_DOCKER_SOCK is unset, default to /var/run/docker.sock when present.
+
+MUTAGEN_MODE="${MUTAGEN_MODE:-auto}"
+
+# Default docker sock path if not explicitly set.
+if [[ -z "${WARDEN_DOCKER_SOCK:-}" && -S /var/run/docker.sock ]]; then
+  export WARDEN_DOCKER_SOCK="/var/run/docker.sock"
+fi
+
+# Detect Warden's mutagen setting from user config, if available.
+WARDEN_CONFIG_FILE="${WARDEN_CONFIG_FILE:-$HOME/.warden/config.yml}"
+WARDEN_MUTAGEN_ALLOWED="unknown"  # true|false|unknown
+if [[ -f "${WARDEN_CONFIG_FILE}" ]]; then
+  if grep -Eq '^[[:space:]]*mutagen:[[:space:]]*true[[:space:]]*$' "${WARDEN_CONFIG_FILE}"; then
+    WARDEN_MUTAGEN_ALLOWED="true"
+  elif grep -Eq '^[[:space:]]*mutagen:[[:space:]]*false[[:space:]]*$' "${WARDEN_CONFIG_FILE}"; then
+    WARDEN_MUTAGEN_ALLOWED="false"
+  fi
+fi
+
+HAS_MUTAGEN_BIN="no"
+if command -v mutagen >/dev/null 2>&1; then
+  HAS_MUTAGEN_BIN="yes"
+fi
+
+# Decide whether to disable mutagen for this run.
+DISABLE_MUTAGEN_FOR_RUN="no"
+
+case "${MUTAGEN_MODE}" in
+  disable)
+    DISABLE_MUTAGEN_FOR_RUN="yes"
+    ;;
+  enable)
+    # Only enable if the binary exists and Warden config does not explicitly disable.
+    if [[ "${HAS_MUTAGEN_BIN}" != "yes" ]]; then
+      echo "⚠️  MUTAGEN_MODE=enable but mutagen binary is not installed; continuing with Mutagen disabled."
+      DISABLE_MUTAGEN_FOR_RUN="yes"
+    elif [[ "${WARDEN_MUTAGEN_ALLOWED}" == "false" ]]; then
+      echo "⚠️  MUTAGEN_MODE=enable but ${WARDEN_CONFIG_FILE} has mutagen: false; continuing with Mutagen disabled."
+      DISABLE_MUTAGEN_FOR_RUN="yes"
+    fi
+    ;;
+  auto|*)
+    # Auto: disable by default on Linux; enable on macOS if available & not disallowed.
+    if [[ "${PLATFORM_OS}" == "linux" ]]; then
+      DISABLE_MUTAGEN_FOR_RUN="yes"
+    else
+      if [[ "${HAS_MUTAGEN_BIN}" != "yes" ]]; then
+        DISABLE_MUTAGEN_FOR_RUN="yes"
+      elif [[ "${WARDEN_MUTAGEN_ALLOWED}" == "false" ]]; then
+        DISABLE_MUTAGEN_FOR_RUN="yes"
+      fi
+    fi
+    ;;
+esac
+
+if [[ "${DISABLE_MUTAGEN_FOR_RUN}" == "yes" ]]; then
+  # These are safe no-ops if your Warden version doesn't use them,
+  # but prevent hard failures in versions that try to invoke mutagen.
+  export WARDEN_SYNC="0"
+  export WARDEN_MUTAGEN="0"
+  echo "ℹ️  Mutagen: disabled for this run (MUTAGEN_MODE=${MUTAGEN_MODE}, OS=${PLATFORM_OS}, mutagen_bin=${HAS_MUTAGEN_BIN}, warden_config_mutagen=${WARDEN_MUTAGEN_ALLOWED})."
+else
+  echo "ℹ️  Mutagen: enabled (MUTAGEN_MODE=${MUTAGEN_MODE}, mutagen_bin=${HAS_MUTAGEN_BIN}, warden_config_mutagen=${WARDEN_MUTAGEN_ALLOWED})."
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -150,6 +252,22 @@ if [[ ! -f .env ]]; then
 else
   echo ""
   echo "ℹ️  .env already exists, skipping warden env-init"
+fi
+# Ensure .env has a PHP_VERSION compatible with MAGENTO_VERSION
+if [[ -f .env && -n "${MAGENTO_PHP_VERSION:-}" ]]; then
+  echo ""
+  echo "➡️  Setting PHP_VERSION=${MAGENTO_PHP_VERSION} in .env for Magento ${MAGENTO_VERSION}..."
+
+  if grep -q '^PHP_VERSION=' .env; then
+    # macOS vs Linux sed flags
+    if [[ "${PLATFORM_OS}" == "macos" ]]; then
+      sed -i '' "s/^PHP_VERSION=.*/PHP_VERSION=${MAGENTO_PHP_VERSION}/" .env
+    else
+      sed -i "s/^PHP_VERSION=.*/PHP_VERSION=${MAGENTO_PHP_VERSION}/" .env
+    fi
+  else
+    echo "PHP_VERSION=${MAGENTO_PHP_VERSION}" >> .env
+  fi
 fi
 
 # Read TRAEFIK_DOMAIN and TRAEFIK_SUBDOMAIN from .env (whatever Warden chose)
@@ -1252,11 +1370,11 @@ if [[ "${INSTALL_HYVA}" == "ask" ]]; then
   fi
 fi
 
-if [[ "${INSTALL_HYVA}" == "yes" ]]; then
+if [[ "${INSTALL_HYVA}" == "yes" && ( -z "${HYVA_REPO:-}" || -z "${HYVA_TOKEN:-}" ) ]]; then
   echo ""
   echo "➡️  Installing Hyvä theme (OSS GitHub mirrors, no license key)..."
 
-  warden env exec -T php-fpm bash <<'HYVA'
+  if ! warden env exec -T php-fpm bash <<'HYVA'
 set -e
 cd /var/www/html
 
@@ -1334,24 +1452,19 @@ else
 fi
 
 HYVA
-
-  echo "✅ Hyvä theme installed and (if detected) set as default."
-  echo ""
-fi
-
-if warden env exec -T php-fpm test -d /var/www/html/vendor/hyva-themes/magento2-theme-module; then
-  echo "Hyvä vendor modules already present in container; skipping Hyvä install."
-  INSTALL_HYVA="no"
-else
-  read -r -p "Install Hyvä theme from their private packagist now? (y/N): " REPLY
-  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
-    INSTALL_HYVA="yes"
+  then
+    echo "⚠️  Hyvä OSS install failed (likely GitHub access / license issue)."
+    echo "    You can get a (free) Hyvä license & token here:"
+    echo "      https://www.hyva.io/licenses/manage/shops/get_free_license/1/"
+    echo "    Then set HYVA_REPO and HYVA_TOKEN in _mage-mirror.config and rerun this script."
+    read -r -p "Press Enter to continue without installing Hyvä..." _
   else
-    INSTALL_HYVA="no"
+    echo "✅ Hyvä theme installed and (if detected) set as default."
+    echo ""
   fi
 fi
 
-if [[ "${INSTALL_HYVA}" == "yes" ]]; then
+if [[ "${INSTALL_HYVA}" == "yes" && -n "${HYVA_REPO:-}" && -n "${HYVA_TOKEN:-}" ]]; then
   echo ""
   echo "➡️  Installing Hyvä theme (private Packagist + license key)..."
 
@@ -1379,8 +1492,41 @@ if [ -d vendor/hyva-themes/magento2-theme-module ]; then
 else
   echo "  - Clearing composer cache..."
   composer clear-cache
+
+  echo "  - Detecting Magento version to choose Hyvä constraint..."
+  MAGENTO_VERSION_INSTALLED="$(composer show magento/product-community-edition --no-ansi --no-interaction 2>/dev/null | awk '/^versions/ {print $NF}' | sed 's/,.*//')"
+
+  if [ -z "$MAGENTO_VERSION_INSTALLED" ]; then
+    HYVA_DEFAULT_THEME_CONSTRAINT="^1.4"
+  else
+    case "$MAGENTO_VERSION_INSTALLED" in
+      2.4.4*)
+        HYVA_DEFAULT_THEME_CONSTRAINT="^1.3"
+        ;;
+      *)
+        HYVA_DEFAULT_THEME_CONSTRAINT="^1.4"
+        ;;
+    esac
+  fi
+
+  echo "    Using Hyvä constraint: ${HYVA_DEFAULT_THEME_CONSTRAINT} (Magento ${MAGENTO_VERSION_INSTALLED:-unknown})"
+
   echo "  - Requiring hyva-themes/magento2-default-theme..."
-  composer require hyva-themes/magento2-default-theme:"^1.4" --with-all-dependencies --prefer-source
+  if ! composer require hyva-themes/magento2-default-theme:"${HYVA_DEFAULT_THEME_CONSTRAINT}" --with-all-dependencies --prefer-source; then
+    echo ""
+    echo "⚠️  Hyvä theme installation via private Packagist failed."
+    echo "    This is often caused by a Composer dependency conflict, for example the psr/log"
+    echo "    version required by Magento 2.4.4-p13 (via laminas/laminas-di) conflicting with"
+    echo "    the version required by newer Hyvä packages."
+    echo ""
+    echo "    Suggestions:"
+    echo "      • Check your composer.json and composer.lock for psr/log constraints."
+    echo "      • Contact Hyvä support to obtain a Hyvä theme version compatible with Magento ${MAGENTO_VERSION_INSTALLED:-2.4.4}."
+    echo "      • Or install Hyvä manually in this project with custom constraints, then re-run this script"
+    echo "        with Install Hyvä theme disabled."
+    echo ""
+    echo "    Continuing _mage-mirror.sh without Hyvä installed..."
+  fi
 fi
 
 echo "  - Detecting Hyvä *default* theme_id via Magento ORM..."
@@ -1541,7 +1687,7 @@ fi
 rm -f "$ZERO_LIST" || true
 
 echo "▶ Running php bin/magento setup:upgrade ..."
-if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:upgrade -vvv; then
+if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:upgrade -q; then
   echo "❌ bin/magento setup:upgrade failed. Dumping Magento logs (inside container):"
   tail -n 60 var/log/exception.log || true
   tail -n 60 var/log/system.log || true
