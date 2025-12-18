@@ -6,7 +6,6 @@ Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-st
 **One command. Zero frustration.**
 
 
- 
 ![mage-mirror header](.github/assets/mage-mirror-hero.svg)
 
 
@@ -20,7 +19,6 @@ Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-st
 ---
 
 ## 🎥 Quick Demo
-
 
 ![mage-mirror demo](.github/assets/mage-mirror-demo.gif)
 
@@ -55,12 +53,16 @@ git clone https://github.com/j-scriptz/mage-mirror.git
 cd mage-mirror
 chmod +x _mage-mirror.sh
 ```
+
 then
+
 ```bash
 ./_mage-mirror.sh
 ```
+
 or
-```aiignore
+
+```bash
 sh _mage-mirror.sh
 ```
 
@@ -71,9 +73,111 @@ Environment URLs:
 
 ---
 
+## 🔐 SSH Key Setup (Local → Remote Server)
+
+If you plan to use **remote cloning**, **rsync**, or **remote DB dumps**, set up SSH keys so your local machine can authenticate to your server without repeatedly entering a password.
+
+### 1) Generate an SSH key on your local machine
+
+**macOS / Linux (recommended: Ed25519)**
+
+```bash
+ssh-keygen -t ed25519 -C "your_email@example.com"
+```
+
+- Press **Enter** to accept the default path: `~/.ssh/id_ed25519`
+- Add a **passphrase** (recommended)
+
+If Ed25519 isn’t supported in your environment, use RSA:
+
+```bash
+ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+```
+
+### 2) Start the SSH agent and add your key
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
+*(If you created an RSA key, replace `id_ed25519` with your key filename.)*
+
+### 3) Add your public key to the remote server
+
+#### Option A: `ssh-copy-id` (easiest, if available)
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub youruser@yourserver.com
+```
+
+#### Option B: Manual (works everywhere)
+
+1) Print your public key:
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+```
+
+2) SSH into your server (password-based login once):
+
+```bash
+ssh youruser@yourserver.com
+```
+
+3) On the server, create `.ssh`, paste the key, and lock permissions:
+
+```bash
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+
+nano ~/.ssh/authorized_keys
+# Paste the full public key line, save, exit
+
+chmod 600 ~/.ssh/authorized_keys
+```
+
+### 4) Test SSH login
+
+```bash
+ssh -i ~/.ssh/id_ed25519 youruser@yourserver.com
+```
+
+### Optional: Simplify with `~/.ssh/config`
+
+Create or edit `~/.ssh/config`:
+
+```sshconfig
+Host myserver
+  HostName yourserver.com
+  User youruser
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+Then connect with:
+
+```bash
+ssh myserver
+```
+
+### Troubleshooting
+
+- `Permission denied (publickey)` usually means:
+  - the key wasn’t added to `authorized_keys`,
+  - permissions are wrong (`~/.ssh` should be `700`, `authorized_keys` should be `600`),
+  - or you’re connecting as the wrong user.
+- Non-standard SSH port:
+
+```bash
+ssh -p 2222 youruser@yourserver.com
+```
+
+---
+
 ## 🚀 Key Features
 
 ### ⚡ Fresh Magento Installs
+
 - Composer create-project  
 - Admin creation  
 - Hyvä auto-install  
@@ -84,6 +188,7 @@ Environment URLs:
 ---
 
 ### 🔁 Clone Magento Sites
+
 Supports:
 
 - Local SQL + env.php/config.php
