@@ -791,34 +791,66 @@ else
 fi
 
 # Ensure DB host matches Warden's db service (imported env.php often has remote host like 'mysql' or 'localhost')
-php <<'PHP'
+# NOTE: Some PHP builds can segfault in CLI with OPcache/JIT enabled. We disable both and fall back to a safe
+# text replacement so the installer can continue.
+echo "➡️  Normalizing DB host in app/etc/env.php to '${MAGENTO_DB_HOST:-db}'..."
+if ! php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP'
 <?php
-$envFile = __DIR__ . '/app/etc/env.php';
+$envFile = getcwd() . '/app/etc/env.php';
+$localHost = getenv('MAGENTO_DB_HOST') ?: 'db';
+
 if (!file_exists($envFile)) {
     fwrite(STDERR, "env.php not found at {$envFile}\n");
     exit(0);
 }
+
 $env = include $envFile;
 if (!is_array($env)) {
     fwrite(STDERR, "env.php did not return an array, skipping DB host adjustment.\n");
     exit(0);
 }
 
-if (isset($env['db']['connection']['default']['host'])) {
+$changed = false;
+if (isset($env['db']['connection']) && is_array($env['db']['connection'])) {
+    foreach ($env['db']['connection'] as $name => &$conn) {
+        if (isset($conn['host']) && $conn['host'] !== $localHost) {
+            $oldHost = $conn['host'];
+            $conn['host'] = $localHost;
+            fwrite(STDOUT, "➡️  Updated DB host for connection '{$name}' from '{$oldHost}' to '{$localHost}'.\n");
+            $changed = true;
+        }
+    }
+} elseif (isset($env['db']['connection']['default']['host'])) {
+    // Legacy shape fallback
     $oldHost = $env['db']['connection']['default']['host'];
-    if ($oldHost !== 'db') {
-        $env['db']['connection']['default']['host'] = 'db';
-        $code = "<?php\nreturn " . var_export($env, true) . ";\n";
-        file_put_contents($envFile, $code);
-        fwrite(STDOUT, "➡️  Updated DB host in env.php from '{$oldHost}' to 'db'.\n");
+    if ($oldHost !== $localHost) {
+        $env['db']['connection']['default']['host'] = $localHost;
+        fwrite(STDOUT, "➡️  Updated DB host in env.php from '{$oldHost}' to '{$localHost}'.\n");
+        $changed = true;
     }
 }
+
+if ($changed) {
+    file_put_contents($envFile, "<?php\nreturn " . var_export($env, true) . ";\n");
+}
 PHP
+then
+  echo "⚠️  PHP crashed or failed while parsing env.php (exit $?). Falling back to a safe text replacement..."
+  # Best-effort: replace any 'host' => '...' with 'host' => 'db' inside env.php.
+  # This is intentionally simple; the FINAL_FIX section later will fully normalize all connections.
+  if command -v perl >/dev/null 2>&1; then
+    perl -0777 -i -pe "s/('host'\s*=>\s*')[^']+(')/\1db\2/g" app/etc/env.php || true
+  else
+    # BSD/GNU sed compatible one-liner (best effort)
+    sed -i'' -e "s/'host'[[:space:]]*=>[[:space:]]*'[^']*'/'host' => 'db'/g" app/etc/env.php 2>/dev/null || true
+  fi
+fi
+
 
 # Optional: generate config.php if missing
 if [ ! -f app/etc/config.php ]; then
   echo "➡️  app/etc/config.php missing; generating deployment configuration from code..."
-  php <<'PHP'
+  php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP'
 <?php
 $root = getcwd();
 
@@ -953,24 +985,62 @@ else
 fi
 
 echo "➡️  Configuring search configuration for this Magento version..."
-if [ -d vendor/magento/module-opensearch ]; then
-  echo "    • Using OpenSearch config keys"
-  bin/magento config:set catalog/search/engine opensearch || true
-  bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
-  bin/magento config:set catalog/search/opensearch_server_port 9200 || true
-  bin/magento config:set catalog/search/opensearch_index_prefix magento2 || true
-  bin/magento config:set catalog/search/opensearch_enable_auth 0 || true
-  bin/magento config:set catalog/search/opensearch_server_timeout 15 || true
-else
-  echo "    • Using Elasticsearch7 config keys (pointing at OpenSearch service)"
-  bin/magento config:set catalog/search/engine elasticsearch7 || true
-  bin/magento config:set catalog/search/elasticsearch7_server_hostname opensearch || true
-  bin/magento config:set catalog/search/elasticsearch7_server_port 9200 || true
-  bin/magento config:set catalog/search/elasticsearch7_index_prefix magento2 || true
-  bin/magento config:set catalog/search/elasticsearch7_enable_auth 0 || true
-  bin/magento config:set catalog/search/elasticsearch7_server_timeout 15 || true
-fi
 
+# Some Magento versions (and some imported config.php states) use different search engine
+# config paths. Detect what exists and only set keys that are available.
+# Also try to enable the relevant Magento search module if it exists but is disabled.
+bin/magento module:enable Magento_OpenSearch Magento_Elasticsearch7 Magento_Elasticsearch6 Magento_Elasticsearch >/dev/null 2>&1 || true
+
+magento_config_path_exists() {
+  bin/magento config:show "$1" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+magento_config_set() {
+  # Quiet + non-fatal
+  bin/magento config:set "$1" "$2" >/dev/null 2>&1 || true
+}
+
+SEARCH_HOST="opensearch"
+SEARCH_PORT="9200"
+SEARCH_PREFIX="magento2"
+SEARCH_TIMEOUT="15"
+
+if magento_config_path_exists "catalog/search/opensearch_server_hostname"; then
+  echo "    • Using OpenSearch config keys"
+  magento_config_set catalog/search/engine opensearch
+  magento_config_set catalog/search/opensearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/opensearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/opensearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/opensearch_enable_auth 0
+  magento_config_set catalog/search/opensearch_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch7_server_hostname"; then
+  echo "    • Using Elasticsearch7 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch7
+  magento_config_set catalog/search/elasticsearch7_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch7_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch7_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch7_enable_auth 0
+  magento_config_set catalog/search/elasticsearch7_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch6_server_hostname"; then
+  echo "    • Using Elasticsearch6 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch6
+  magento_config_set catalog/search/elasticsearch6_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch6_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch6_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch6_enable_auth 0
+  magento_config_set catalog/search/elasticsearch6_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch_server_hostname"; then
+  echo "    • Using legacy Elasticsearch config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch
+  magento_config_set catalog/search/elasticsearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch_enable_auth 0
+  magento_config_set catalog/search/elasticsearch_server_timeout "${SEARCH_TIMEOUT}"
+else
+  echo "⚠️  Could not detect any supported search config paths in this Magento build; skipping search configuration."
+fi
 
 echo "➡️  Updating base URLs for local store configuration..."
 
@@ -1485,27 +1555,72 @@ if [ "${DISABLE_FULLPAGE_CACHE:-true}" = "true" ]; then
   echo "  - Disabling full_page cache..."
   bin/magento cache:disable full_page || true
 fi
+echo "  - Setting Admin Session Lifetime (admin/security/session_lifetime) to 31536000 seconds..."
+bin/magento config:set admin/security/session_lifetime 31536000 || true
+
+echo "  - Disabling layout and block_html caches..."
+bin/magento cache:disable layout block_html || true
+
 echo "  - Disabling admin login CAPTCHA..."
 echo "    bin/magento config:set admin/captcha/enable 0"
 bin/magento config:set admin/captcha/enable 0 || true
 
 echo "➡️  Configuring search configuration for this Magento version..."
-if [ -d vendor/magento/module-opensearch ]; then
+
+# Some Magento versions (and some imported config.php states) use different search engine
+# config paths. Detect what exists and only set keys that are available.
+# Also try to enable the relevant Magento search module if it exists but is disabled.
+bin/magento module:enable Magento_OpenSearch Magento_Elasticsearch7 Magento_Elasticsearch6 Magento_Elasticsearch >/dev/null 2>&1 || true
+
+magento_config_path_exists() {
+  bin/magento config:show "$1" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+magento_config_set() {
+  # Quiet + non-fatal
+  bin/magento config:set "$1" "$2" >/dev/null 2>&1 || true
+}
+
+SEARCH_HOST="opensearch"
+SEARCH_PORT="9200"
+SEARCH_PREFIX="magento2"
+SEARCH_TIMEOUT="15"
+
+if magento_config_path_exists "catalog/search/opensearch_server_hostname"; then
   echo "    • Using OpenSearch config keys"
-  bin/magento config:set catalog/search/engine opensearch || true
-  bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
-  bin/magento config:set catalog/search/opensearch_server_port 9200 || true
-  bin/magento config:set catalog/search/opensearch_index_prefix magento2 || true
-  bin/magento config:set catalog/search/opensearch_enable_auth 0 || true
-  bin/magento config:set catalog/search/opensearch_server_timeout 15 || true
-else
+  magento_config_set catalog/search/engine opensearch
+  magento_config_set catalog/search/opensearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/opensearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/opensearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/opensearch_enable_auth 0
+  magento_config_set catalog/search/opensearch_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch7_server_hostname"; then
   echo "    • Using Elasticsearch7 config keys (pointing at OpenSearch service)"
-  bin/magento config:set catalog/search/engine elasticsearch7 || true
-  bin/magento config:set catalog/search/elasticsearch7_server_hostname opensearch || true
-  bin/magento config:set catalog/search/elasticsearch7_server_port 9200 || true
-  bin/magento config:set catalog/search/elasticsearch7_index_prefix magento2 || true
-  bin/magento config:set catalog/search/elasticsearch7_enable_auth 0 || true
-  bin/magento config:set catalog/search/elasticsearch7_server_timeout 15 || true
+  magento_config_set catalog/search/engine elasticsearch7
+  magento_config_set catalog/search/elasticsearch7_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch7_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch7_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch7_enable_auth 0
+  magento_config_set catalog/search/elasticsearch7_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch6_server_hostname"; then
+  echo "    • Using Elasticsearch6 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch6
+  magento_config_set catalog/search/elasticsearch6_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch6_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch6_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch6_enable_auth 0
+  magento_config_set catalog/search/elasticsearch6_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch_server_hostname"; then
+  echo "    • Using legacy Elasticsearch config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch
+  magento_config_set catalog/search/elasticsearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch_enable_auth 0
+  magento_config_set catalog/search/elasticsearch_server_timeout "${SEARCH_TIMEOUT}"
+else
+  echo "⚠️  Could not detect any supported search config paths in this Magento build; skipping search configuration."
 fi
 
 
@@ -1842,14 +1957,15 @@ echo "  - Pre-fixing zero-byte preview images to avoid 'Wrong file' during setup
 # 1) Create a 1x1 transparent PNG placeholder (once per container)
 PLACEHOLDER="/tmp/mage-mirror-placeholder.png"
 if [ ! -f "$PLACEHOLDER" ]; then
-  php -r '
-    $im = imagecreatetruecolor(1, 1);
-    imagesavealpha($im, true);
-    $transparent = imagecolorallocatealpha($im, 0, 0, 0, 127);
-    imagefill($im, 0, 0, $transparent);
-    imagepng($im, "/tmp/mage-mirror-placeholder.png");
-    imagedestroy($im);
-  '
+  php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP' || true
+<?php
+$im = imagecreatetruecolor(1, 1);
+imagesavealpha($im, true);
+$transparent = imagecolorallocatealpha($im, 0, 0, 0, 127);
+imagefill($im, 0, 0, $transparent);
+imagepng($im, "/tmp/mage-mirror-placeholder.png");
+imagedestroy($im);
+PHP
 fi
 
 # 2) Find zero-byte images under app/ and pub/ (covers Hyvä media/preview.png and others)
@@ -1870,6 +1986,18 @@ else
   echo "    No zero-byte image files found."
 fi
 rm -f "$ZERO_LIST" || true
+
+cd /var/www/html
+mkdir -p pub/media/screenshots
+php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP' || true
+<?php
+$im = imagecreatetruecolor(1, 1);
+imagesavealpha($im, true);
+$t = imagecolorallocatealpha($im,  0, 0, 0, 127);
+imagefill($im, 0, 0, $t);
+imagepng($im, "pub/media/screenshots/frontend-mobile-view.png");
+imagedestroy($im);
+PHP
 
 echo "▶ Running php bin/magento setup:upgrade ..."
 if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:upgrade -q; then
