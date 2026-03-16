@@ -17,6 +17,13 @@ fi
 
 PROJECT_NAME="${PROJECT_NAME:-mage}"       # WARDEN_ENV_NAME
 MAGENTO_PACKAGE="${MAGENTO_PACKAGE:-magento/project-community-edition}"
+
+# Defaults (Warden): DB container is usually reachable as host 'db'
+: "${MAGENTO_DB_HOST:=db}"
+: "${MAGENTO_DB_NAME:=magento}"
+: "${MAGENTO_DB_USER:=magento}"
+: "${MAGENTO_DB_PASSWORD:=magento}"
+
 MAGENTO_VERSION="${MAGENTO_VERSION:-2.4.x}"   # "2.4.x" = latest 2.4
 
 MAGENTO_DB_HOST="${MAGENTO_DB_HOST:-db}"
@@ -121,84 +128,35 @@ case "${OS_NAME}" in
     ;;
 esac
 
-if [[ "${PLATFORM_OS}" == "other" ]]; then
-  echo "⚠️  This script is tuned for macOS and Linux. You're on ${OS_NAME}."
+# ---- Warden compatibility knobs ----
+# Fix: docker-compose may reference ${WARDEN_DOCKER_SOCK} for socket mounts; if it's empty you'll get
+# "invalid spec: :/var/run/docker.sock: empty section between colons".
+if [[ -z "${WARDEN_DOCKER_SOCK:-}" ]]; then
+  for _sock in "/var/run/docker.sock" "${XDG_RUNTIME_DIR:-}/docker.sock" "/run/user/${UID}/docker.sock" "${HOME}/.docker/run/docker.sock"; do
+    if [[ -n "${_sock}" && -S "${_sock}" ]]; then
+      export WARDEN_DOCKER_SOCK="${_sock}"
+      break
+    fi
+  done
+fi
+if [[ -z "${WARDEN_DOCKER_SOCK:-}" ]]; then
+  echo "❌ Could not locate a docker.sock. Set WARDEN_DOCKER_SOCK to your Docker socket path and re-run." >&2
+  exit 1
 fi
 
-### ---- Mutagen & Docker-sock compatibility (auto) ----
-# Warden can optionally use Mutagen for file sync (often helpful on macOS; usually unnecessary on Linux).
-# This installer keeps Mutagen *optional* and auto-detects sensible defaults.
-#
-# Controls (environment variables or _mage-mirror.config):
-#   MUTAGEN_MODE: auto | enable | disable
-#     - auto    : disable on Linux, enable on macOS if mutagen exists and Warden config allows
-#     - enable  : attempt to enable (falls back to disable if mutagen missing or config disallows)
-#     - disable : force disable
-#
-# Also: if WARDEN_DOCKER_SOCK is unset, default to /var/run/docker.sock when present.
-
-MUTAGEN_MODE="${MUTAGEN_MODE:-auto}"
-
-# Default docker sock path if not explicitly set.
-if [[ -z "${WARDEN_DOCKER_SOCK:-}" && -S /var/run/docker.sock ]]; then
-  export WARDEN_DOCKER_SOCK="/var/run/docker.sock"
-fi
-
-# Detect Warden's mutagen setting from user config, if available.
-WARDEN_CONFIG_FILE="${WARDEN_CONFIG_FILE:-$HOME/.warden/config.yml}"
-WARDEN_MUTAGEN_ALLOWED="unknown"  # true|false|unknown
-if [[ -f "${WARDEN_CONFIG_FILE}" ]]; then
-  if grep -Eq '^[[:space:]]*mutagen:[[:space:]]*true[[:space:]]*$' "${WARDEN_CONFIG_FILE}"; then
-    WARDEN_MUTAGEN_ALLOWED="true"
-  elif grep -Eq '^[[:space:]]*mutagen:[[:space:]]*false[[:space:]]*$' "${WARDEN_CONFIG_FILE}"; then
-    WARDEN_MUTAGEN_ALLOWED="false"
+# Mutagen is only required on macOS for environments leveraging sync sessions.
+# Make it optional: disable if missing, and default-disable on Linux.
+if [[ "${PLATFORM_OS}" == "linux" ]]; then
+  export WARDEN_MUTAGEN_ENABLE="${WARDEN_MUTAGEN_ENABLE:-0}"
+else
+  if ! command -v mutagen >/dev/null 2>&1; then
+    export WARDEN_MUTAGEN_ENABLE="${WARDEN_MUTAGEN_ENABLE:-0}"
   fi
 fi
 
-HAS_MUTAGEN_BIN="no"
-if command -v mutagen >/dev/null 2>&1; then
-  HAS_MUTAGEN_BIN="yes"
-fi
 
-# Decide whether to disable mutagen for this run.
-DISABLE_MUTAGEN_FOR_RUN="no"
-
-case "${MUTAGEN_MODE}" in
-  disable)
-    DISABLE_MUTAGEN_FOR_RUN="yes"
-    ;;
-  enable)
-    # Only enable if the binary exists and Warden config does not explicitly disable.
-    if [[ "${HAS_MUTAGEN_BIN}" != "yes" ]]; then
-      echo "⚠️  MUTAGEN_MODE=enable but mutagen binary is not installed; continuing with Mutagen disabled."
-      DISABLE_MUTAGEN_FOR_RUN="yes"
-    elif [[ "${WARDEN_MUTAGEN_ALLOWED}" == "false" ]]; then
-      echo "⚠️  MUTAGEN_MODE=enable but ${WARDEN_CONFIG_FILE} has mutagen: false; continuing with Mutagen disabled."
-      DISABLE_MUTAGEN_FOR_RUN="yes"
-    fi
-    ;;
-  auto|*)
-    # Auto: disable by default on Linux; enable on macOS if available & not disallowed.
-    if [[ "${PLATFORM_OS}" == "linux" ]]; then
-      DISABLE_MUTAGEN_FOR_RUN="yes"
-    else
-      if [[ "${HAS_MUTAGEN_BIN}" != "yes" ]]; then
-        DISABLE_MUTAGEN_FOR_RUN="yes"
-      elif [[ "${WARDEN_MUTAGEN_ALLOWED}" == "false" ]]; then
-        DISABLE_MUTAGEN_FOR_RUN="yes"
-      fi
-    fi
-    ;;
-esac
-
-if [[ "${DISABLE_MUTAGEN_FOR_RUN}" == "yes" ]]; then
-  # These are safe no-ops if your Warden version doesn't use them,
-  # but prevent hard failures in versions that try to invoke mutagen.
-  export WARDEN_SYNC="0"
-  export WARDEN_MUTAGEN="0"
-  echo "ℹ️  Mutagen: disabled for this run (MUTAGEN_MODE=${MUTAGEN_MODE}, OS=${PLATFORM_OS}, mutagen_bin=${HAS_MUTAGEN_BIN}, warden_config_mutagen=${WARDEN_MUTAGEN_ALLOWED})."
-else
-  echo "ℹ️  Mutagen: enabled (MUTAGEN_MODE=${MUTAGEN_MODE}, mutagen_bin=${HAS_MUTAGEN_BIN}, warden_config_mutagen=${WARDEN_MUTAGEN_ALLOWED})."
+if [[ "${PLATFORM_OS}" == "other" ]]; then
+  echo "⚠️  This script is tuned for macOS and Linux. You're on ${OS_NAME}."
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -269,6 +227,94 @@ if [[ -f .env && -n "${MAGENTO_PHP_VERSION:-}" ]]; then
     echo "PHP_VERSION=${MAGENTO_PHP_VERSION}" >> .env
   fi
 fi
+
+# Ensure .env uses a DB engine/version compatible with the requested Magento version.
+# Magento 2.4.5+ supports MySQL 8 (recommended) or MariaDB up to 10.4; it does NOT support MariaDB 10.6.
+# Warden magento2 defaults to MariaDB 10.6, so for Magento 2.4.5+ we switch to MySQL 8 automatically.
+MAGENTO_DB_DISTRIBUTION="${MAGENTO_DB_DISTRIBUTION:-}"
+MAGENTO_DB_DISTRIBUTION_VERSION="${MAGENTO_DB_DISTRIBUTION_VERSION:-}"
+
+if [[ -z "${MAGENTO_DB_DISTRIBUTION}" || -z "${MAGENTO_DB_DISTRIBUTION_VERSION}" ]]; then
+  case "${MAGENTO_VERSION}" in
+    2.4.5*|2.4.6*|2.4.7*|2.4.8*|2.4.9*)
+      MAGENTO_DB_DISTRIBUTION="${MAGENTO_DB_DISTRIBUTION:-mysql}"
+      MAGENTO_DB_DISTRIBUTION_VERSION="${MAGENTO_DB_DISTRIBUTION_VERSION:-8.0}"
+      ;;
+  esac
+fi
+
+if [[ -n "${MAGENTO_DB_DISTRIBUTION}" && -n "${MAGENTO_DB_DISTRIBUTION_VERSION}" && -f .env ]]; then
+  echo ""
+  echo "➡️  Setting MYSQL_DISTRIBUTION=${MAGENTO_DB_DISTRIBUTION} and MYSQL_DISTRIBUTION_VERSION=${MAGENTO_DB_DISTRIBUTION_VERSION} in .env ..."
+
+  if grep -q '^MYSQL_DISTRIBUTION=' .env; then
+    if [[ "${PLATFORM_OS}" == "macos" ]]; then
+      sed -i '' "s/^MYSQL_DISTRIBUTION=.*/MYSQL_DISTRIBUTION=${MAGENTO_DB_DISTRIBUTION}/" .env
+    else
+      sed -i "s/^MYSQL_DISTRIBUTION=.*/MYSQL_DISTRIBUTION=${MAGENTO_DB_DISTRIBUTION}/" .env
+    fi
+  else
+    echo "MYSQL_DISTRIBUTION=${MAGENTO_DB_DISTRIBUTION}" >> .env
+  fi
+
+  if grep -q '^MYSQL_DISTRIBUTION_VERSION=' .env; then
+    if [[ "${PLATFORM_OS}" == "macos" ]]; then
+      sed -i '' "s/^MYSQL_DISTRIBUTION_VERSION=.*/MYSQL_DISTRIBUTION_VERSION=${MAGENTO_DB_DISTRIBUTION_VERSION}/" .env
+    else
+      sed -i "s/^MYSQL_DISTRIBUTION_VERSION=.*/MYSQL_DISTRIBUTION_VERSION=${MAGENTO_DB_DISTRIBUTION_VERSION}/" .env
+    fi
+  else
+    echo "MYSQL_DISTRIBUTION_VERSION=${MAGENTO_DB_DISTRIBUTION_VERSION}" >> .env
+  fi
+
+  echo "ℹ️  Restart the environment so the DB change takes effect:"
+  echo "    warden env down -v && warden env up"
+fi
+
+# Ensure .env uses an OpenSearch version compatible with Magento.
+# Magento 2.4.5 uses Elasticsearch7 client and is commonly incompatible with OpenSearch 2.x/Elasticsearch 8.x endpoints,
+# which can surface as: "no handler found for uri [/.../document/_mapping] and method [PUT]".
+# Pin OpenSearch to 1.2 for Magento 2.4.5 to avoid typed-mapping endpoint issues.
+if [[ "${MAGENTO_VERSION}" =~ ^2\.4\.5([.-]|$) && -f .env ]]; then
+  echo ""
+  echo "➡️  Pinning OpenSearch to a Magento 2.4.5-compatible version (OpenSearch 1.2) in .env ..."
+
+  # Enable OpenSearch
+  if grep -q '^WARDEN_OPENSEARCH=' .env; then
+    if [[ "${PLATFORM_OS}" == "macos" ]]; then
+      sed -i '' 's/^WARDEN_OPENSEARCH=.*/WARDEN_OPENSEARCH=1/' .env
+    else
+      sed -i 's/^WARDEN_OPENSEARCH=.*/WARDEN_OPENSEARCH=1/' .env
+    fi
+  else
+    echo "WARDEN_OPENSEARCH=1" >> .env
+  fi
+
+  # Disable Elasticsearch if present to avoid running both
+  if grep -q '^WARDEN_ELASTICSEARCH=' .env; then
+    if [[ "${PLATFORM_OS}" == "macos" ]]; then
+      sed -i '' 's/^WARDEN_ELASTICSEARCH=.*/WARDEN_ELASTICSEARCH=0/' .env
+    else
+      sed -i 's/^WARDEN_ELASTICSEARCH=.*/WARDEN_ELASTICSEARCH=0/' .env
+    fi
+  fi
+
+  # Set OpenSearch version
+  if grep -q '^OPENSEARCH_VERSION=' .env; then
+    if [[ "${PLATFORM_OS}" == "macos" ]]; then
+      sed -i '' 's/^OPENSEARCH_VERSION=.*/OPENSEARCH_VERSION=1.2/' .env
+    else
+      sed -i 's/^OPENSEARCH_VERSION=.*/OPENSEARCH_VERSION=1.2/' .env
+    fi
+  else
+    echo "OPENSEARCH_VERSION=1.2" >> .env
+  fi
+
+  echo "ℹ️  Restart the environment so the OpenSearch version change takes effect:"
+  echo "    warden env down -v && warden env up"
+fi
+
+
 
 # Read TRAEFIK_DOMAIN and TRAEFIK_SUBDOMAIN from .env (whatever Warden chose)
 if [[ -f .env ]]; then
@@ -745,34 +791,66 @@ else
 fi
 
 # Ensure DB host matches Warden's db service (imported env.php often has remote host like 'mysql' or 'localhost')
-php <<'PHP'
+# NOTE: Some PHP builds can segfault in CLI with OPcache/JIT enabled. We disable both and fall back to a safe
+# text replacement so the installer can continue.
+echo "➡️  Normalizing DB host in app/etc/env.php to '${MAGENTO_DB_HOST:-db}'..."
+if ! php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP'
 <?php
-$envFile = __DIR__ . '/app/etc/env.php';
+$envFile = getcwd() . '/app/etc/env.php';
+$localHost = getenv('MAGENTO_DB_HOST') ?: 'db';
+
 if (!file_exists($envFile)) {
     fwrite(STDERR, "env.php not found at {$envFile}\n");
     exit(0);
 }
+
 $env = include $envFile;
 if (!is_array($env)) {
     fwrite(STDERR, "env.php did not return an array, skipping DB host adjustment.\n");
     exit(0);
 }
 
-if (isset($env['db']['connection']['default']['host'])) {
+$changed = false;
+if (isset($env['db']['connection']) && is_array($env['db']['connection'])) {
+    foreach ($env['db']['connection'] as $name => &$conn) {
+        if (isset($conn['host']) && $conn['host'] !== $localHost) {
+            $oldHost = $conn['host'];
+            $conn['host'] = $localHost;
+            fwrite(STDOUT, "➡️  Updated DB host for connection '{$name}' from '{$oldHost}' to '{$localHost}'.\n");
+            $changed = true;
+        }
+    }
+} elseif (isset($env['db']['connection']['default']['host'])) {
+    // Legacy shape fallback
     $oldHost = $env['db']['connection']['default']['host'];
-    if ($oldHost !== 'db') {
-        $env['db']['connection']['default']['host'] = 'db';
-        $code = "<?php\nreturn " . var_export($env, true) . ";\n";
-        file_put_contents($envFile, $code);
-        fwrite(STDOUT, "➡️  Updated DB host in env.php from '{$oldHost}' to 'db'.\n");
+    if ($oldHost !== $localHost) {
+        $env['db']['connection']['default']['host'] = $localHost;
+        fwrite(STDOUT, "➡️  Updated DB host in env.php from '{$oldHost}' to '{$localHost}'.\n");
+        $changed = true;
     }
 }
+
+if ($changed) {
+    file_put_contents($envFile, "<?php\nreturn " . var_export($env, true) . ";\n");
+}
 PHP
+then
+  echo "⚠️  PHP crashed or failed while parsing env.php (exit $?). Falling back to a safe text replacement..."
+  # Best-effort: replace any 'host' => '...' with 'host' => 'db' inside env.php.
+  # This is intentionally simple; the FINAL_FIX section later will fully normalize all connections.
+  if command -v perl >/dev/null 2>&1; then
+    perl -0777 -i -pe "s/('host'\s*=>\s*')[^']+(')/\1db\2/g" app/etc/env.php || true
+  else
+    # BSD/GNU sed compatible one-liner (best effort)
+    sed -i'' -e "s/'host'[[:space:]]*=>[[:space:]]*'[^']*'/'host' => 'db'/g" app/etc/env.php 2>/dev/null || true
+  fi
+fi
+
 
 # Optional: generate config.php if missing
 if [ ! -f app/etc/config.php ]; then
   echo "➡️  app/etc/config.php missing; generating deployment configuration from code..."
-  php <<'PHP'
+  php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP'
 <?php
 $root = getcwd();
 
@@ -906,17 +984,63 @@ else
   echo "ℹ️  curl not available in php-fpm; skipping OpenSearch readiness check."
 fi
 
-echo "➡️  Forcing search configuration to Warden OpenSearch..."
-echo "    bin/magento config:set catalog/search/engine opensearch"
-echo "    bin/magento config:set catalog/search/opensearch_server_hostname opensearch"
-echo "    bin/magento config:set catalog/search/opensearch_server_port 9200"
-echo "    bin/magento config:set catalog/search/opensearch_index_prefix magento2"
-echo "    bin/magento config:set catalog/search/opensearch_enable_auth 0"
-bin/magento config:set catalog/search/engine opensearch || true
-bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
-bin/magento config:set catalog/search/opensearch_server_port 9200 || true
-bin/magento config:set catalog/search/opensearch_index_prefix magento2 || true
-bin/magento config:set catalog/search/opensearch_enable_auth 0 || true
+echo "➡️  Configuring search configuration for this Magento version..."
+
+# Some Magento versions (and some imported config.php states) use different search engine
+# config paths. Detect what exists and only set keys that are available.
+# Also try to enable the relevant Magento search module if it exists but is disabled.
+bin/magento module:enable Magento_OpenSearch Magento_Elasticsearch7 Magento_Elasticsearch6 Magento_Elasticsearch >/dev/null 2>&1 || true
+
+magento_config_path_exists() {
+  bin/magento config:show "$1" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+magento_config_set() {
+  # Quiet + non-fatal
+  bin/magento config:set "$1" "$2" >/dev/null 2>&1 || true
+}
+
+SEARCH_HOST="opensearch"
+SEARCH_PORT="9200"
+SEARCH_PREFIX="magento2"
+SEARCH_TIMEOUT="15"
+
+if magento_config_path_exists "catalog/search/opensearch_server_hostname"; then
+  echo "    • Using OpenSearch config keys"
+  magento_config_set catalog/search/engine opensearch
+  magento_config_set catalog/search/opensearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/opensearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/opensearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/opensearch_enable_auth 0
+  magento_config_set catalog/search/opensearch_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch7_server_hostname"; then
+  echo "    • Using Elasticsearch7 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch7
+  magento_config_set catalog/search/elasticsearch7_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch7_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch7_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch7_enable_auth 0
+  magento_config_set catalog/search/elasticsearch7_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch6_server_hostname"; then
+  echo "    • Using Elasticsearch6 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch6
+  magento_config_set catalog/search/elasticsearch6_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch6_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch6_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch6_enable_auth 0
+  magento_config_set catalog/search/elasticsearch6_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch_server_hostname"; then
+  echo "    • Using legacy Elasticsearch config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch
+  magento_config_set catalog/search/elasticsearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch_enable_auth 0
+  magento_config_set catalog/search/elasticsearch_server_timeout "${SEARCH_TIMEOUT}"
+else
+  echo "⚠️  Could not detect any supported search config paths in this Magento build; skipping search configuration."
+fi
 
 echo "➡️  Updating base URLs for local store configuration..."
 
@@ -987,26 +1111,128 @@ set -e
 
 cd /var/www/html
 
+# Bail out if already installed
 if [ -f app/etc/env.php ]; then
   echo "ℹ️  Magento already installed (app/etc/env.php exists). Skipping setup:install."
   exit 0
 fi
 
+# Composer 2.4.0-era installs often trip modern Composer security-advisory blocking.
+# This is safe for LOCAL legacy testing; do not use in production.
+composer config --global audit.block-insecure false >/dev/null 2>&1 || true
+
 echo "➡️  Running composer create-project for Magento..."
 META_PACKAGE="${MAGENTO_PACKAGE:-magento/project-community-edition}"
 META_VERSION="${MAGENTO_VERSION:-2.4.*}"
+
 if [ -f auth.json ]; then
   echo "  - auth.json found; using COMPOSER_AUTH for repo.magento.com..."
   export COMPOSER_AUTH="$(cat auth.json)"
 fi
 
-composer create-project --repository-url=https://repo.magento.com/ \
+# NOTE:
+# Composer 1 is no longer supported by Packagist (since 2025-09-01), so legacy Magento installs
+# must run on Composer 2 and we patch legacy plugin constraints instead.
+COMPOSER_BIN="composer"
+
+# Create the project without installing yet (we patch composer.json before dependency resolution)
+${COMPOSER_BIN} create-project --no-install --repository-url=https://repo.magento.com/ \
   "${META_PACKAGE}" /tmp/magento "${META_VERSION}"
 
 rsync -a /tmp/magento/ /var/www/html/
 rm -rf /tmp/magento/
 
+cd /var/www/html
+
+# IMPORTANT:
+# Composer update/create-project resolves require-dev even with --no-dev.
+# For legacy installs, remove require-dev to prevent dev-only constraints from blocking install.
+\
+php -r '
+$f="composer.json";
+$j=json_decode(file_get_contents($f), true);
+if (!is_array($j)) { exit(0); }
+
+$changed = false;
+
+if (array_key_exists("require-dev", $j)) {
+  unset($j["require-dev"]);
+  echo "  - Removed require-dev from composer.json for legacy install\n";
+  $changed = true;
+}
+
+if (isset($j["require"]) && is_array($j["require"])) {
+  if (array_key_exists("magento/composer-root-update-plugin", $j["require"])) {
+    unset($j["require"]["magento/composer-root-update-plugin"]);
+    echo "  - Removed magento/composer-root-update-plugin (incompatible with modern Composer)\n";
+    $changed = true;
+  }
+  // Optional: Magento old old dependency-audit plugin can also conflict with modern audit behavior.
+  if (array_key_exists("magento/composer-dependency-version-audit-plugin", $j["require"])) {
+    unset($j["require"]["magento/composer-dependency-version-audit-plugin"]);
+    echo "  - Removed magento/composer-dependency-version-audit-plugin (legacy)\n";
+    $changed = true;
+  }
+}
+
+if ($changed) {
+  file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES) . PHP_EOL);
+}
+' || true
+
+
+# Composer 2+ requires explicit allow-plugins in non-interactive mode.
+# Enable common Magento/Laminas plugins if present.
+composer config --no-interaction allow-plugins.laminas/laminas-dependency-plugin true >/dev/null 2>&1 || true
+composer config --no-interaction allow-plugins.cweagans/composer-patches true >/dev/null 2>&1 || true
+composer config --no-interaction allow-plugins.magento/composer-root-update-plugin true >/dev/null 2>&1 || true
+composer config --no-interaction allow-plugins.magento/composer-dependency-version-audit-plugin true >/dev/null 2>&1 || true
+
+# Keep the project-level audit setting aligned (global is set above too).
+composer config audit.block-insecure false >/dev/null 2>&1 || true
+
+echo "➡️  Installing Magento dependencies (no-dev)..."
+${COMPOSER_BIN} install --no-dev --no-interaction --prefer-dist --no-progress
+
+
+# Choose search engine args based on requested Magento version.
+# Search engine selection:
+# - Magento 2.4.0–2.4.5: engine value is "elasticsearch7" (even when pointing to OpenSearch).
+# - Magento 2.4.6+: can use engine value "opensearch" (if CLI supports opensearch flags).
+SEARCH_HOST="opensearch"
+if [[ "${META_VERSION}" =~ ^2\.4\.[0-3]([.-]|$) ]]; then
+  SEARCH_HOST="elasticsearch"
+fi
+
+USE_OPENSEARCH_ENGINE=0
+if bin/magento setup:install --help 2>/dev/null | grep -q -- '--opensearch-host'; then
+  USE_OPENSEARCH_ENGINE=1
+fi
+
+SEARCH_ARGS=()
+if [ "${USE_OPENSEARCH_ENGINE}" -eq 1 ]; then
+  SEARCH_ARGS+=(--search-engine=opensearch)
+  SEARCH_ARGS+=(--opensearch-host="${SEARCH_HOST}" --opensearch-port=9200)
+  SEARCH_ARGS+=(--opensearch-index-prefix=magento2 --opensearch-enable-auth=0 --opensearch-timeout=15)
+else
+  SEARCH_ARGS+=(--search-engine=elasticsearch7)
+  SEARCH_ARGS+=(--elasticsearch-host="${SEARCH_HOST}" --elasticsearch-port=9200)
+  SEARCH_ARGS+=(--elasticsearch-index-prefix=magento2 --elasticsearch-enable-auth=0 --elasticsearch-timeout=15)
+fi
+
+# Apply ACSD-59280 for Magento 2.4.4* installs (fixes ReflectionUnionType::getName() fatal during install)
+if [[ "${META_VERSION}" =~ ^2\.4\.4 ]]; then
+  echo "➡️  Applying ACSD-59280 (ReflectionUnionType fix) via Quality Patches Tool..."
+  composer require --no-interaction --no-progress magento/quality-patches:^1.1.50
+  php -d memory_limit=-1 vendor/bin/magento-patches apply ACSD-59280
+fi
+
 echo "➡️  Running bin/magento setup:install..."
+echo "  - DB host: ${MAGENTO_DB_HOST} (should be \"db\" in Warden)"
+if [ "${MAGENTO_DB_HOST}" = "localhost" ] || [ "${MAGENTO_DB_HOST}" = "127.0.0.1" ]; then
+  echo "❌ MAGENTO_DB_HOST is set to localhost/127.0.0.1. In Warden, use db (the DB container hostname)."
+  exit 1
+fi
 bin/magento setup:install \
   --backend-frontname="${ADMIN_FRONTNAME}" \
   --admin-firstname="${ADMIN_FIRSTNAME}" \
@@ -1022,12 +1248,7 @@ bin/magento setup:install \
   --db-name=magento \
   --db-user=magento \
   --db-password=magento \
-  --search-engine=opensearch \
-  --opensearch-host=opensearch \
-  --opensearch-port=9200 \
-  --opensearch-index-prefix=magento2 \
-  --opensearch-enable-auth=0 \
-  --opensearch-timeout=15 \
+  "${SEARCH_ARGS[@]}" \
   --http-cache-hosts=varnish:80 \
   --session-save=redis \
   --session-save-redis-host=redis \
@@ -1092,9 +1313,21 @@ fi
 
 if [[ "${INSTALL_JSCRIPTZ}" == "yes" ]]; then
   echo "➡️  Installing Jscriptz Subcats extension"
-  warden env exec -T php-fpm bash <<'JSCRIPTZ'
+  warden env exec -T php-fpm env \
+    HYVA_REPO="${HYVA_REPO:-}" \
+    HYVA_TOKEN="${HYVA_TOKEN:-}" \
+    bash <<'JSCRIPTZ'
 set -e
 cd /var/www/html
+
+# Avoid injecting the Hyvä *repository* here.
+# If a Hyvä key is available, we store auth in the project's auth.json so Composer
+# can run non-interactively later (without affecting non-Hyvä operations like sample data).
+if [ -n "${HYVA_TOKEN:-}" ]; then
+  echo "  - Configuring Hyvä auth (project auth.json) for non-interactive Composer..."
+  composer config --auth http-basic.hyva-themes.repo.packagist.com token "${HYVA_TOKEN}" >/dev/null 2>&1 || true
+fi
+
 composer require jscriptz/module-subcats:^2.1
 bin/magento module:enable Jscriptz_Subcats || true
 JSCRIPTZ
@@ -1262,6 +1495,17 @@ PHP
 BASE_URL="https://${TRAEFIK_SUBDOMAIN}.${TRAEFIK_DOMAIN}/"
 SUBCATS_URL="https://${TRAEFIK_DOMAIN}/"
 
+if [ ! -f app/etc/env.php ]; then
+  echo "❌ app/etc/env.php not found. Magento is not installed (setup:install likely failed)."
+  echo "   Re-run the script and review the setup:install output above."
+  exit 1
+fi
+
+if ! bin/magento list 2>/dev/null | grep -qE '^[[:space:]]*config:set[[:space:]]'; then
+  echo "⚠️  'bin/magento config:set' is not available (Magento not fully installed). Skipping base URL updates."
+  exit 0
+fi
+
 echo "  - Updating base URLs for default scope..."
 bin/magento config:set web/unsecure/base_url      "$BASE_URL"
 bin/magento config:set web/secure/base_url        "$BASE_URL"
@@ -1309,21 +1553,75 @@ if [ "${DISABLE_FULLPAGE_CACHE:-true}" = "true" ]; then
   echo "  - Disabling full_page cache..."
   bin/magento cache:disable full_page || true
 fi
+echo "  - Setting Admin Session Lifetime (admin/security/session_lifetime) to 31536000 seconds..."
+bin/magento config:set admin/security/session_lifetime 31536000 || true
+
+echo "  - Disabling layout and block_html caches..."
+bin/magento cache:disable layout block_html || true
+
 echo "  - Disabling admin login CAPTCHA..."
 echo "    bin/magento config:set admin/captcha/enable 0"
 bin/magento config:set admin/captcha/enable 0 || true
 
-echo "➡️  Forcing search configuration to Warden OpenSearch..."
-echo "    bin/magento config:set catalog/search/engine opensearch"
-echo "    bin/magento config:set catalog/search/opensearch_server_hostname opensearch"
-echo "    bin/magento config:set catalog/search/opensearch_server_port 9200"
-echo "    bin/magento config:set catalog/search/opensearch_index_prefix magento2"
-echo "    bin/magento config:set catalog/search/opensearch_enable_auth 0"
-bin/magento config:set catalog/search/engine opensearch || true
-bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
-bin/magento config:set catalog/search/opensearch_server_port 9200 || true
-bin/magento config:set catalog/search/opensearch_index_prefix magento2 || true
-bin/magento config:set catalog/search/opensearch_enable_auth 0 || true
+echo "➡️  Configuring search configuration for this Magento version..."
+
+# Some Magento versions (and some imported config.php states) use different search engine
+# config paths. Detect what exists and only set keys that are available.
+# Also try to enable the relevant Magento search module if it exists but is disabled.
+bin/magento module:enable Magento_OpenSearch Magento_Elasticsearch7 Magento_Elasticsearch6 Magento_Elasticsearch >/dev/null 2>&1 || true
+
+magento_config_path_exists() {
+  bin/magento config:show "$1" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+magento_config_set() {
+  # Quiet + non-fatal
+  bin/magento config:set "$1" "$2" >/dev/null 2>&1 || true
+}
+
+SEARCH_HOST="opensearch"
+SEARCH_PORT="9200"
+SEARCH_PREFIX="magento2"
+SEARCH_TIMEOUT="15"
+
+if magento_config_path_exists "catalog/search/opensearch_server_hostname"; then
+  echo "    • Using OpenSearch config keys"
+  magento_config_set catalog/search/engine opensearch
+  magento_config_set catalog/search/opensearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/opensearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/opensearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/opensearch_enable_auth 0
+  magento_config_set catalog/search/opensearch_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch7_server_hostname"; then
+  echo "    • Using Elasticsearch7 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch7
+  magento_config_set catalog/search/elasticsearch7_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch7_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch7_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch7_enable_auth 0
+  magento_config_set catalog/search/elasticsearch7_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch6_server_hostname"; then
+  echo "    • Using Elasticsearch6 config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch6
+  magento_config_set catalog/search/elasticsearch6_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch6_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch6_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch6_enable_auth 0
+  magento_config_set catalog/search/elasticsearch6_server_timeout "${SEARCH_TIMEOUT}"
+elif magento_config_path_exists "catalog/search/elasticsearch_server_hostname"; then
+  echo "    • Using legacy Elasticsearch config keys (pointing at OpenSearch service)"
+  magento_config_set catalog/search/engine elasticsearch
+  magento_config_set catalog/search/elasticsearch_server_hostname "${SEARCH_HOST}"
+  magento_config_set catalog/search/elasticsearch_server_port "${SEARCH_PORT}"
+  magento_config_set catalog/search/elasticsearch_index_prefix "${SEARCH_PREFIX}"
+  magento_config_set catalog/search/elasticsearch_enable_auth 0
+  magento_config_set catalog/search/elasticsearch_server_timeout "${SEARCH_TIMEOUT}"
+else
+  echo "⚠️  Could not detect any supported search config paths in this Magento build; skipping search configuration."
+fi
+
+
 
 
 FINAL_FIX
@@ -1657,14 +1955,15 @@ echo "  - Pre-fixing zero-byte preview images to avoid 'Wrong file' during setup
 # 1) Create a 1x1 transparent PNG placeholder (once per container)
 PLACEHOLDER="/tmp/mage-mirror-placeholder.png"
 if [ ! -f "$PLACEHOLDER" ]; then
-  php -r '
-    $im = imagecreatetruecolor(1, 1);
-    imagesavealpha($im, true);
-    $transparent = imagecolorallocatealpha($im, 0, 0, 0, 127);
-    imagefill($im, 0, 0, $transparent);
-    imagepng($im, "/tmp/mage-mirror-placeholder.png");
-    imagedestroy($im);
-  '
+  php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP' || true
+<?php
+$im = imagecreatetruecolor(1, 1);
+imagesavealpha($im, true);
+$transparent = imagecolorallocatealpha($im, 0, 0, 0, 127);
+imagefill($im, 0, 0, $transparent);
+imagepng($im, "/tmp/mage-mirror-placeholder.png");
+imagedestroy($im);
+PHP
 fi
 
 # 2) Find zero-byte images under app/ and pub/ (covers Hyvä media/preview.png and others)
@@ -1685,6 +1984,18 @@ else
   echo "    No zero-byte image files found."
 fi
 rm -f "$ZERO_LIST" || true
+
+cd /var/www/html
+mkdir -p pub/media/screenshots
+php -d opcache.enable_cli=0 -d opcache.jit=0 <<'PHP' || true
+<?php
+$im = imagecreatetruecolor(1, 1);
+imagesavealpha($im, true);
+$t = imagecolorallocatealpha($im,  0, 0, 0, 127);
+imagefill($im, 0, 0, $t);
+imagepng($im, "pub/media/screenshots/frontend-mobile-view.png");
+imagedestroy($im);
+PHP
 
 echo "▶ Running php bin/magento setup:upgrade ..."
 if ! php -d display_errors=0 -d error_reporting=8191 bin/magento setup:upgrade -q; then
