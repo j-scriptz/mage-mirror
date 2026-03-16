@@ -1205,10 +1205,8 @@ if [[ "${META_VERSION}" =~ ^2\.4\.[0-3]([.-]|$) ]]; then
 fi
 
 USE_OPENSEARCH_ENGINE=0
-if [[ "${META_VERSION}" =~ ^2\.4\.([6-9]|[1-9][0-9])([.-]|$) ]]; then
-  if bin/magento setup:install --help 2>/dev/null | grep -q -- '--opensearch-host'; then
-    USE_OPENSEARCH_ENGINE=1
-  fi
+if bin/magento setup:install --help 2>/dev/null | grep -q -- '--opensearch-host'; then
+  USE_OPENSEARCH_ENGINE=1
 fi
 
 SEARCH_ARGS=()
