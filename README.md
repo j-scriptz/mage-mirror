@@ -1,4 +1,4 @@
-# 🚀 mage-mirror
+# 🚀 mage-mirror 
 ### The Fastest Way to Spin Up Magento + Warden + Hyvä — On macOS & Linux
 
 Fresh installs, Hyvä auto-setup, remote cloning, Magento upgrades, and multi-store routing — all from one script.
